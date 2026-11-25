@@ -2,592 +2,2000 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<meta name="theme-color" content="#14161a">
-<title>Fridge Claude</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kitchen Stock</title>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;500;600;700&family=Sofia+Sans+Condensed:wght@500;600;700&family=Sofia+Sans+Extra+Condensed:wght@700;800&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #14161a; --panel: #1d2026; --line: #2c3038; --text: #eceef2; --muted: #9aa1ad;
-    --have: #3fb27f; --low: #e0a43a; --out: #e2574c; --accent: #d97757;
+:root{
+  /* Enamelware: cool white, cobalt rim, condensed shelf-label type.
+     One screen. Phone: header, one view (inventory or chat), composer. Wide (Pi, laptop): inventory beside chat. */
+  --paper:#F1F3F0;
+  --panel:#FFFFFF;
+  --ink:#131A3B;
+  --muted:#515A80;
+  --rule:#C8CEDF;
+  --accent:#1E3FCC;
+  --on-accent:#FFFFFF;
+  --wash:#E3E8FB;
+  --low:#F0B429; --on-low:#2B1E00; --low-ink:#8A5A00;
+  --out:#CF3A22; --on-out:#FFFFFF; --out-ink:#B02E19;
+  --display:"Sofia Sans Extra Condensed","Arial Narrow","Helvetica Neue",Arial,sans-serif;
+  --label:"Sofia Sans Condensed","Arial Narrow","Helvetica Neue",Arial,sans-serif;
+  --body:"Sofia Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0C1126; --panel:#141A36; --ink:#EDF0FB; --muted:#A2AACB; --rule:#2B3460;
+    --accent:#8FA5FF; --on-accent:#0C1126; --wash:#1D2650;
+    --low:#F0B429; --on-low:#2B1E00; --low-ink:#F3C55B;
+    --out:#FF6F52; --on-out:#2A0A03; --out-ink:#FF8A72;
+    color-scheme:dark;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-    font: 18px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  body { display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
-  h1 { font-size: 22px; margin: 0; font-weight: 650; letter-spacing: .2px; }
-  #status { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
-    background: var(--panel); color: var(--muted); font-size: 15px; }
-  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
-  #status.listening #dot { background: var(--have); }
-  #status.hearing #dot, #status.thinking #dot { background: var(--accent); animation: pulse 1s infinite; }
-  #status.error #dot { background: var(--out); }
-  @keyframes pulse { 50% { opacity: .3; } }
-  #level { width: 60px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
-  #level > i { display: block; height: 100%; width: 0; background: var(--have); transition: width .08s; }
-  .spacer { flex: 1; }
-  button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
-    border-radius: 12px; padding: 10px 16px; cursor: pointer; }
-  button:active { transform: scale(.97); }
-  #talk { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  #convo { padding: 12px 18px; min-height: 76px; border-bottom: 1px solid var(--line); }
-  #heard { color: var(--muted); font-size: 16px; min-height: 22px; }
-  #reply { font-size: 22px; font-weight: 550; min-height: 30px; }
-  main { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 14px 18px; overflow: hidden; }
-  section { background: var(--panel); border-radius: 16px; padding: 12px; display: flex; flex-direction: column; min-height: 0; }
-  section h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; display: flex; gap: 8px; align-items: center; }
-  section h2 .count { color: var(--muted); font-weight: 400; }
-  .list { overflow-y: auto; display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px;
-    background: #262a31; border: 1px solid var(--line); font-size: 17px; user-select: none; }
-  .chip .x { color: var(--muted); font-size: 15px; padding-left: 4px; }
-  .chip.flash { outline: 2px solid var(--accent); }
-  #sec-out h2 { color: var(--out); } #sec-low h2 { color: var(--low); } #sec-have h2 { color: var(--have); }
-  footer { display: flex; gap: 10px; padding: 0 18px 14px; }
-  footer input { flex: 1; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
-    border-radius: 12px; padding: 10px 14px; }
-  .overlay { position: fixed; inset: 0; background: rgba(10,11,13,.92); display: flex; align-items: center; justify-content: center; z-index: 10; }
-  .overlay[hidden] { display: none; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 24px; width: min(560px, 92vw); max-height: 90vh; overflow-y: auto; }
-  .card h3 { margin: 0 0 12px; font-size: 22px; }
-  .card label { display: block; margin: 14px 0 4px; color: var(--muted); font-size: 15px; }
-  .card input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-  .card .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
-  .card p { color: var(--muted); font-size: 15px; margin: 6px 0; }
-  #start-btn { font-size: 24px; padding: 18px 30px; background: var(--accent); border-color: var(--accent); color: #fff; }
-  @media (orientation: portrait) { main { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; } }
+}
+:root[data-theme="dark"]{
+  --paper:#0C1126; --panel:#141A36; --ink:#EDF0FB; --muted:#A2AACB; --rule:#2B3460;
+  --accent:#8FA5FF; --on-accent:#0C1126; --wash:#1D2650;
+  --low:#F0B429; --on-low:#2B1E00; --low-ink:#F3C55B;
+  --out:#FF6F52; --on-out:#2A0A03; --out-ink:#FF8A72;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--paper);color:var(--ink);font:400 1rem/1.45 var(--body);-webkit-text-size-adjust:100%}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h1,h2,p,ul,ol{margin:0}
+
+.app{position:relative;height:100%;display:grid;grid-template-columns:minmax(0,1fr);
+  grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"top" "banner" "main" "composer"}
+
+/* Header: wordmark, view switch, tallies */
+.top{grid-area:top;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+  grid-template-areas:"brand views gear" "tallies tallies tallies";align-items:center;gap:6px 10px;
+  padding:10px 16px 0;background:var(--panel);border-bottom:4px double var(--accent)}
+.brand{grid-area:brand;width:min-content;font:800 1.5rem/.92 var(--display);letter-spacing:.05em;text-transform:uppercase;color:var(--accent)}
+.views{grid-area:views;justify-self:end;display:inline-grid;grid-auto-flow:column;border:1px solid var(--rule);border-radius:4px;overflow:hidden}
+.views a{padding:10px 10px;font:600 .9rem/1 var(--label);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-decoration:none}
+.views a[aria-current="page"]{background:var(--ink);color:var(--paper)}
+.icon-btn{display:inline-grid;place-items:center;width:40px;height:40px;border:1px solid var(--rule);border-radius:4px;background:transparent;color:var(--ink)}
+.icon-btn svg{width:20px;height:20px}
+.gear{grid-area:gear}
+.top{position:relative}
+.wake{position:absolute;right:66px;top:14px;display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;border:1px solid var(--rule);border-radius:999px;background:var(--panel);color:var(--muted);font:600 .82rem/1 var(--label);letter-spacing:.06em;text-transform:uppercase}
+.wake::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--rule)}
+.wake[data-state="listening"]{color:var(--ink)}
+.wake[data-state="listening"]::before{background:#2E9E5B}
+.wake[data-state="paused"]::before,.wake[data-state="loading"]::before{background:var(--accent)}
+.wake[data-state="error"]::before{background:var(--out)}
+.field input.cfg{display:block;width:100%;height:44px;padding:0 10px;border:1px solid var(--rule);border-radius:4px;background:var(--paper);font-size:1rem}
+@media (max-width:759.98px){.wake{top:auto;bottom:8px;right:12px;min-height:26px;font-size:.72rem}}
+.tallies{grid-area:tallies;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+.tally{display:flex;align-items:baseline;gap:8px;padding:4px 0 6px;background:none;border:0;border-bottom:3px solid transparent;text-align:left}
+.tally .n{font:800 2.25rem/1 var(--display);font-variant-numeric:tabular-nums}
+.tally .l{font:600 .85rem/1 var(--label);letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+.tally[aria-pressed="true"]{border-bottom-color:var(--ink)}
+.tally[data-filter="low"].hot .n{color:var(--low-ink)}
+.tally[data-filter="out"].hot .n{color:var(--out-ink)}
+
+.banner{grid-area:banner;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 16px;background:var(--low);color:var(--on-low);font:500 .95rem/1.3 var(--body)}
+.banner button{border:1px solid currentColor;background:transparent;border-radius:4px;padding:4px 10px;font:600 .9rem/1.2 var(--label);letter-spacing:.06em;text-transform:uppercase}
+
+/* Inventory */
+.inventory,.chat{grid-area:main;min-height:0;display:flex;flex-direction:column}
+.finder{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--rule)}
+.finder input{flex:1;min-width:0;height:44px;padding:0 12px;border:1px solid var(--rule);border-radius:4px;background:var(--panel);font-size:1.0625rem}
+.finder button{flex:none;max-width:55%;height:44px;padding:0 12px;border:0;border-radius:4px;background:var(--ink);color:var(--paper);font:600 1rem/1.1 var(--label);letter-spacing:.04em;overflow-wrap:anywhere}
+.shelves{flex:1;min-height:0;overflow-y:auto;padding:4px 16px 20px}
+.shelf-h{display:flex;align-items:baseline;gap:8px;margin:16px 0 2px;font:700 .82rem/1 var(--label);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.shelf-h .c{font-variant-numeric:tabular-nums;font-weight:500}
+.shelf-h.out-h{color:var(--out-ink)}
+.rows{list-style:none;padding:0}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;border-bottom:1px solid var(--rule)}
+.row .name{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px;min-height:46px;padding:10px 0;border:0;background:none;text-align:left;
+  font:600 1.3rem/1.12 var(--label);overflow-wrap:anywhere}
+.row[data-s="out"] .name{color:var(--muted)}
+.age{font:500 .82rem/1 var(--label);letter-spacing:.06em;color:var(--muted);white-space:nowrap}
+.age.old{color:var(--low-ink)}
+.seg{display:inline-grid;grid-auto-flow:column;border:1px solid var(--rule);border-radius:4px;overflow:hidden;background:var(--panel)}
+.seg button{min-width:46px;min-height:38px;padding:0 6px;border:0;border-left:1px solid var(--rule);background:transparent;color:var(--muted);
+  font:600 .82rem/1 var(--label);letter-spacing:.08em;text-transform:uppercase}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"][data-s="have"]{background:var(--wash);color:var(--ink)}
+.seg button[aria-pressed="true"][data-s="low"]{background:var(--low);color:var(--on-low)}
+.seg button[aria-pressed="true"][data-s="out"]{background:var(--out);color:var(--on-out)}
+.row.editing{grid-template-columns:minmax(0,1fr);padding:8px 0}
+.edit{display:flex;flex-wrap:wrap;gap:8px}
+.edit input{flex:1 1 180px;min-width:0;height:42px;padding:0 10px;border:1px solid var(--accent);border-radius:4px;background:var(--panel);font:600 1.15rem/1 var(--label)}
+.edit button{height:42px;padding:0 12px;border:1px solid var(--ink);border-radius:4px;background:transparent;font:600 .9rem/1 var(--label);letter-spacing:.06em;text-transform:uppercase}
+.edit button.primary{background:var(--ink);color:var(--paper)}
+.edit button.danger{border-color:var(--out-ink);color:var(--out-ink)}
+.blank{padding:28px 0;max-width:34ch}
+.blank h2{font:800 2rem/1 var(--display);letter-spacing:.03em;text-transform:uppercase;text-wrap:balance}
+.blank p{margin-top:8px;color:var(--muted)}
+.blank button{margin-top:14px;min-height:46px;padding:0 16px;border:0;border-radius:4px;background:var(--accent);color:var(--on-accent);font:700 1.05rem/1 var(--label);letter-spacing:.06em;text-transform:uppercase}
+
+/* Chat */
+.feed{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding:14px 16px 18px}
+.msg{max-width:62ch}
+.msg.user{white-space:pre-wrap;align-self:flex-end;max-width:min(85%,52ch);padding:8px 12px;background:var(--wash);border-radius:4px 4px 0 4px;font-weight:500;overflow-wrap:anywhere}
+.msg.user .cap{display:block;font:600 .78rem/1.4 var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.msg.claude{align-self:stretch;padding-left:12px;border-left:2px solid var(--accent)}
+.who{font:700 .74rem/1 var(--label);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.body{overflow-wrap:anywhere}
+.body p+p,.body p+ul,.body p+ol,.body ul+p,.body ol+p,.body h4{margin-top:8px}
+.body ul,.body ol{padding-left:20px}
+.body li+li{margin-top:3px}
+.body h4{font:700 1.05rem/1.2 var(--label);letter-spacing:.03em;margin-bottom:2px}
+.body code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}
+.thinking{color:var(--muted)}
+.thinking::after{content:"";display:inline-block;width:1.2em;text-align:left;animation:dots 1.4s steps(4,end) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.note{margin-top:6px;color:var(--muted);font-size:.95rem}
+.err{margin-top:6px;color:var(--out-ink);font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{padding:3px 8px;border:1px solid var(--rule);border-radius:2px;background:var(--panel);font:600 .92rem/1.25 var(--label);letter-spacing:.02em}
+.chip.low{border-color:var(--low);box-shadow:inset 3px 0 0 var(--low)}
+.chip.out{border-color:var(--out);box-shadow:inset 3px 0 0 var(--out)}
+.chip.gone{color:var(--muted);text-decoration:line-through}
+button.chip{color:var(--accent);border-style:dashed}
+.undone .chips{opacity:.45}
+.acts{margin-top:8px}
+.acts button{min-height:36px;padding:0 12px;border:1px solid var(--rule);border-radius:4px;background:transparent;color:var(--muted);font:600 .85rem/1 var(--label);letter-spacing:.08em;text-transform:uppercase}
+.intro{max-width:40ch}
+.intro h2{font:800 1.9rem/1 var(--display);letter-spacing:.03em;text-transform:uppercase;text-wrap:balance}
+.intro p{margin-top:8px;color:var(--muted)}
+.intro ul{list-style:none;padding:0;margin-top:12px;display:grid;gap:8px}
+.intro li button{width:100%;min-height:44px;padding:8px 12px;border:1px solid var(--rule);border-radius:4px;background:var(--panel);text-align:left;font-style:italic}
+
+/* Composer */
+.composer{grid-area:composer;position:relative;display:flex;flex-direction:column;gap:8px;padding:8px 16px 12px;background:var(--panel);border-top:1px solid var(--rule)}
+.quick{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,.9fr);gap:8px}
+.quick button{min-height:42px;padding:6px 8px;border:1px solid var(--ink);border-radius:4px;background:transparent;font:600 .95rem/1.1 var(--label);letter-spacing:.05em;text-transform:uppercase}
+.quick button.lead{background:var(--ink);color:var(--paper)}
+.quick button:disabled,.entry button:disabled{opacity:.4;cursor:default}
+.status{font:500 .92rem/1.3 var(--body);color:var(--muted)}
+.hush{display:flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:0 14px;border:2px solid var(--accent);border-radius:4px;background:var(--wash);color:var(--ink);font:700 1rem/1 var(--label);letter-spacing:.07em;text-transform:uppercase}
+.hush svg{width:18px;height:18px;color:var(--accent)}
+.attach{display:flex;flex-wrap:wrap;gap:6px}
+.attach button{padding:4px 8px;border:1px solid var(--rule);border-radius:2px;background:var(--paper);font:600 .9rem/1.2 var(--label)}
+.entry{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:8px;align-items:end}
+.entry textarea{display:block;width:100%;min-height:48px;max-height:120px;padding:12px;border:1px solid var(--rule);border-radius:4px;background:var(--paper);font:400 1.0625rem/1.35 var(--body);resize:none}
+.cam,.send,.mic{display:inline-grid;place-items:center;width:48px;height:48px;border-radius:4px}
+.cam{border:1px solid var(--rule);background:transparent}
+.send{border:0;background:var(--ink);color:var(--paper)}
+.mic{border:0;border-radius:50%;background:var(--accent);color:var(--on-accent)}
+.cam svg,.send svg,.mic svg{width:22px;height:22px}
+.mic[data-on="true"]{animation:ring 1.6s ease-out infinite}
+.mic.nudge{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 40%,transparent)}
+@keyframes ring{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 14px transparent}}
+.entry textarea.nudge{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35%,transparent)}
+.off-note{color:var(--muted);font-size:.95rem}
+.bulk{display:grid;gap:4px;padding:8px 12px;border:2px solid var(--accent);border-radius:4px;background:var(--wash)}
+.bulk-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
+.bulk-meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.bulk-title{font:800 1.3rem/1 var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+.bulk-state,.bulk-count{font:600 .85rem/1 var(--label);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.bulk-head button{min-height:38px;padding:0 14px;border:0;border-radius:4px;background:var(--ink);color:var(--paper);font:700 .95rem/1 var(--label);letter-spacing:.08em;text-transform:uppercase}
+.bulk-live{font-style:italic;color:var(--muted);overflow-wrap:anywhere}
+.bulk-reply{font-weight:600;overflow-wrap:anywhere}
+.toast{position:absolute;left:16px;right:16px;bottom:100%;margin-bottom:8px;padding:10px 12px;border:0;border-left:3px solid var(--accent);border-radius:4px;background:var(--ink);color:var(--paper);text-align:left;font:500 1rem/1.35 var(--body);box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:5}
+
+/* Settings sheet */
+.sheet{position:absolute;inset:0;z-index:20;display:flex;align-items:flex-end;justify-content:center;background:color-mix(in srgb,#060a1c 55%,transparent)}
+.sheet-in{width:min(100%,560px);max-height:92%;overflow-y:auto;display:grid;gap:14px;padding:16px;background:var(--panel);border-top:4px double var(--accent)}
+.sheet-in header{display:flex;align-items:center;justify-content:space-between}
+.sheet-in h2{font:800 1.7rem/1 var(--display);letter-spacing:.05em;text-transform:uppercase}
+.field label,.field .lab{display:block;font:700 .82rem/1 var(--label);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.field textarea{display:block;width:100%;min-height:110px;padding:10px;border:1px solid var(--rule);border-radius:4px;background:var(--paper);font-size:1rem;line-height:1.4;resize:vertical}
+.field p{color:var(--muted);font-size:.95rem;max-width:60ch}
+.field .line{display:flex;align-items:center;gap:10px;margin-top:8px}
+.field .line button{min-height:40px;padding:0 14px;border:0;border-radius:4px;background:var(--ink);color:var(--paper);font:700 .9rem/1 var(--label);letter-spacing:.08em;text-transform:uppercase}
+.field label.check{display:flex;align-items:center;gap:10px;min-height:44px;margin:0;font:500 1rem/1.3 var(--body);letter-spacing:0;text-transform:none;color:var(--ink)}
+.check input{width:22px;height:22px;accent-color:var(--accent)}
+
+@media (max-width:759.98px){
+  .app[data-view="inventory"] .chat{display:none}
+  .app[data-view="chat"] .inventory{display:none}
+  .app[data-view="chat"] .status{display:none}
+}
+@media (min-width:760px){
+  .app{grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr);grid-template-areas:"top top" "banner banner" "inventory chat" "inventory composer"}
+  .top{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"brand tallies gear";padding:6px 16px}
+  .views,.status,.toast{display:none}
+  .brand{width:auto;white-space:nowrap;font-size:1.75rem;line-height:1}
+  .tallies{grid-template-columns:repeat(3,auto);justify-content:start;gap:28px;padding-left:22px}
+  .tally{padding:2px 0 3px}
+  .inventory{grid-area:inventory;border-right:1px solid var(--rule)}
+  .chat{grid-area:chat}
+  .sheet{align-items:center}
+  .sheet-in{border:1px solid var(--rule);border-top:4px double var(--accent)}
+}
+@media (max-height:540px){
+  .tally .n{font-size:1.8rem}
+  .composer{gap:6px;padding:6px 12px 8px}
+  .quick button{min-height:36px}
+  .cam,.send,.mic{width:44px;height:44px}
+  .entry textarea{min-height:44px;padding:10px}
+  .feed{padding:10px 12px 12px;gap:10px}
+}
+@media (prefers-reduced-motion:reduce){
+  .mic[data-on="true"]{animation:none;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 45%,transparent)}
+  .thinking::after{animation:none;content:"..."}
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>Kitchen</h1>
-  <div id="status"><span id="dot"></span><span id="status-text">Starting…</span><div id="level"><i></i></div></div>
-  <div class="spacer"></div>
-  <button id="talk" title="Talk without the wake word">🎤 Talk</button>
-  <button id="settings-btn" title="Settings">⚙︎</button>
-</header>
+<div class="app" id="app" data-view="inventory">
+  <header class="top">
+    <h1 class="brand">Kitchen Stock</h1>
+    <button class="wake" id="wake" type="button" hidden></button>
+    <nav class="views" aria-label="View">
+      <a href="#inventory" id="tab-inventory" aria-current="page">Inventory</a>
+      <a href="#chat" id="tab-chat">Chat</a>
+    </nav>
+    <button class="icon-btn gear" id="btn-settings" type="button" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    </button>
+    <div class="tallies" role="group" aria-label="Show items by state">
+      <button class="tally" type="button" data-filter="have" aria-pressed="false"><span class="n" id="n-have">0</span><span class="l">Have</span></button>
+      <button class="tally" type="button" data-filter="low" aria-pressed="false"><span class="n" id="n-low">0</span><span class="l">Low</span></button>
+      <button class="tally" type="button" data-filter="out" aria-pressed="false"><span class="n" id="n-out">0</span><span class="l">Out</span></button>
+    </div>
+  </header>
 
-<div id="convo">
-  <div id="heard"></div>
-  <div id="reply">Say the wake word, wait for the chime, then tell me what changed.</div>
-</div>
+  <div class="banner" id="banner" role="status" hidden></div>
 
-<main>
-  <section id="sec-out"><h2>Out <span class="count"></span></h2><div class="list" data-status="out"></div></section>
-  <section id="sec-low"><h2>Low <span class="count"></span></h2><div class="list" data-status="low"></div></section>
-  <section id="sec-have"><h2>Have <span class="count"></span></h2><div class="list" data-status="have"></div></section>
-</main>
+  <section class="inventory" id="inventory" aria-label="Inventory">
+    <div class="finder">
+      <input id="find" type="search" placeholder="Find or add an item" autocomplete="off" aria-label="Find or add an item">
+      <button id="btn-add" type="button" hidden></button>
+    </div>
+    <div class="shelves" id="shelves"></div>
+  </section>
 
-<footer>
-  <input id="type-box" placeholder="Or type it: “out of blueberries, low on eggs”" autocomplete="off">
-  <button id="type-send">Send</button>
-</footer>
+  <section class="chat" id="chat" aria-label="Chat with Claude">
+    <div class="feed" id="feed"></div>
+  </section>
 
-<div class="overlay" id="start-overlay">
-  <div class="card" style="text-align:center">
-    <h3>Fridge Claude</h3>
-    <p>Tap to turn on the microphone and keep the screen awake.</p>
-    <p id="start-msg"></p>
-    <div class="row" style="justify-content:center"><button id="start-btn">Start listening</button></div>
-  </div>
-</div>
+  <footer class="composer">
+    <button class="toast" id="toast" type="button" hidden></button>
+    <div class="bulk" id="bulk" hidden>
+      <div class="bulk-head">
+        <div class="bulk-meta">
+          <span class="bulk-title">Bulk add</span>
+          <span class="bulk-state" id="bulk-state"></span>
+          <span class="bulk-count" id="bulk-count"></span>
+        </div>
+        <button id="bulk-done" type="button">Done</button>
+      </div>
+      <p class="bulk-live" id="bulk-live"></p>
+      <p class="bulk-reply" id="bulk-reply" hidden></p>
+    </div>
+    <div class="status" id="status" role="status" hidden></div>
+    <button class="hush" id="btn-hush" type="button" hidden>
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+      Stop reading aloud
+    </button>
+    <div class="quick" id="quick">
+      <button class="lead" id="q-order" type="button">Add receipt</button>
+      <button id="q-dinner" type="button">Dinner ideas</button>
+      <button id="q-bulk" type="button">Bulk add</button>
+    </div>
+    <div class="attach" id="attach" hidden></div>
+    <p class="off-note" id="off-note" hidden>Claude isn't available in this view. You can still update items by hand.</p>
+    <form class="entry" id="form">
+      <button class="cam" id="btn-photo" type="button" aria-label="Attach a photo or screenshot" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      </button>
+      <textarea id="say" rows="1" placeholder="What changed?" aria-label="Message to Claude"></textarea>
+      <button class="mic" id="btn-mic" type="button" aria-label="Speak" data-on="false" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+      </button>
+      <button class="send" id="btn-send" type="submit" aria-label="Send">
+        <svg id="ico-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+        <svg id="ico-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" hidden><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+      </button>
+    </form>
+    <input id="photo" type="file" accept="image/*" multiple hidden>
+  </footer>
 
-<div class="overlay" id="settings" hidden>
-  <div class="card">
-    <h3>Settings</h3>
-    <label>Claude API key</label>
-    <input id="s-key" type="password" placeholder="sk-ant-…">
-    <label>Claude model</label>
-    <input id="s-model" placeholder="claude-haiku-5-5">
-    <label>Google Sheet sync URL (Apps Script web app, optional)</label>
-    <input id="s-sheet" placeholder="https://script.google.com/macros/s/…/exec">
-    <label>Wake word model file (.onnx, next to index.html)</label>
-    <input id="s-wake" placeholder="hey_claude.onnx">
-    <label>Wake sensitivity threshold (0.1–0.9, lower = more sensitive)</label>
-    <input id="s-thresh" type="number" step="0.05" min="0.1" max="0.9">
-    <p>Settings are saved only on this tablet.</p>
-    <div class="row">
-      <button id="s-cancel">Cancel</button>
-      <button id="s-save" style="background:var(--accent);border-color:var(--accent);color:#fff">Save</button>
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-in" role="dialog" aria-modal="true" aria-labelledby="sheet-h">
+      <header>
+        <h2 id="sheet-h">Settings</h2>
+        <button class="icon-btn" id="sheet-close" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="field">
+        <label for="notes">Household notes for Claude</label>
+        <textarea id="notes" placeholder="Who eats here, what you like, what to avoid. Claude reads this before every reply."></textarea>
+        <div class="line"><button id="notes-save" type="button">Save notes</button><span id="notes-msg" role="status"></span></div>
+      </div>
+      <div class="field">
+        <label for="cfg-key">Claude API key</label>
+        <input id="cfg-key" class="cfg" type="password" placeholder="sk-ant-…" autocomplete="off">
+        <label for="cfg-sheet" style="margin-top:12px">Google Sheet link (Apps Script web app URL)</label>
+        <input id="cfg-sheet" class="cfg" type="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+        <label class="check" for="cfg-wake"><input id="cfg-wake" type="checkbox"> Listen for “Hey Jarvis” on this device</label>
+        <div class="line"><button id="cfg-save" type="button">Save</button><span id="cfg-msg" role="status"></span></div>
+        <p>These are saved only on this device.</p>
+      </div>
+      <div class="field">
+        <label class="check" for="sound"><input id="sound" type="checkbox" checked> Play a sound when Claude adds or changes an item</label>
+      </div>
+      <div class="field" id="speak-field" hidden>
+        <label class="check" for="speak"><input id="speak" type="checkbox"> Read Claude's replies aloud on this device</label>
+      </div>
+      <div class="field">
+        <span class="lab">How Add receipt works</span>
+        <p>Tap Add receipt and take a photo of the paper receipt that comes with the Instacart order, or pick a screenshot of the order. Claude adds what was delivered, including replacements.</p>
+      </div>
     </div>
   </div>
 </div>
 
 <script>
+(() => {
 "use strict";
 
-/* ---------------- Settings & storage ---------------- */
-const DEFAULTS = { key: "", model: "claude-haiku-5-5", sheet: "", wake: "hey_jarvis_v0.1.onnx", thresh: 0.5 };
-function loadSettings() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("fc.settings") || "{}") }; }
-  catch { return { ...DEFAULTS }; }
-}
-let settings = loadSettings();
-function saveSettings() { try { localStorage.setItem("fc.settings", JSON.stringify(settings)); } catch {} }
-
-// inventory: { "blueberries": { status: "out", updated: 1732560000000 } }
-let inventory = {};
-try { inventory = JSON.parse(localStorage.getItem("fc.inventory") || "{}"); } catch { inventory = {}; }
-function saveInventory() {
-  try { localStorage.setItem("fc.inventory", JSON.stringify(inventory)); } catch {}
-  scheduleSheetPush();
-}
-
-/* ---------------- UI ---------------- */
+const CATS = ["Produce","Meat & seafood","Dairy & eggs","Bakery","Pantry","Spices & baking","Condiments & sauces","Snacks","Drinks","Frozen","Prepared & leftovers","Other"];
+const STATES = ["have","low","out"];
+const LABEL = {have:"Have", low:"Low", out:"Out"};
+const DAY = 864e5;
 const $ = (id) => document.getElementById(id);
-// "hey_claude.onnx" / "hey_jarvis_v0.1.onnx" -> "Hey Claude" / "Hey Jarvis"
-function wakeLabel() {
-  return (settings.wake || DEFAULTS.wake).replace(/\.onnx$/i, "").replace(/_v[\d.]+$/i, "")
-    .split(/[_\-\s]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-}
-const STATUS_ORDER = ["have", "low", "out"];
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-function setStatus(kind, text) {
-  $("status").className = kind;
-  $("status-text").textContent = text;
+const app = $("app"), shelves = $("shelves"), feedEl = $("feed"), say = $("say"), photo = $("photo");
+
+const S = {
+  server:{}, items:{}, loaded:false, slow:false, invExists:false, dbOff:false, dbError:null, saveFail:null,
+  notes:"", order:null, filter:"all", query:"", view:"inventory",
+  feed:[], history:[], seq:0, busy:false, ctl:null, lastChanges:"",
+  bulk:false, bulkBuf:"", bulkCount:0, bulkEnding:false, bulkReply:"", voice:null, mic:"idle", micPaused:false, partial:"",
+  editing:null, dirty:false, attach:[], speak:false, sound:true, speaking:false, speakSeq:0, asking:false, kbSent:"", toolsOk:false, canImages:false, maxImages:1, claudeOff:false, fellBack:false, micGone:false
+};
+let db = null, sample = null, mcp = null, dict = null, tts = null, limits = null, sampleReady = Promise.resolve();
+let pending = null, inflight = null, flushing = null, silenceT = null, toastT = null, loadT = null, kbT = null;
+const hasMic = () => !!dict && !S.micGone;
+
+/* ---------- Claude's standing instructions ---------- */
+
+const RULES = `You are the assistant built into Kitchen Stock, one household's kitchen inventory. People talk to you by voice or by typing, usually while standing in the kitchen. You keep the inventory accurate and answer questions about it. Voice transcripts are imperfect: expect mishearings ("kick a man soy sauce" is Kikkoman soy sauce), run-on sentences and several items in one breath.
+
+THE INVENTORY
+- Every item has a name and exactly one state: have, low, or out. There are no quantities. Never ask how much of something there is.
+- Names are short and said the way the household says them: "Kikkoman soy sauce", "red grapes", "chicken thighs". Strip sizes, counts, pack sizes and store-listing noise ("Kroger Boneless Skinless Chicken Thighs, 2.5 lb" becomes "chicken thighs"). Keep a brand only when they said it or it identifies the thing. Keep distinctions that matter for cooking (red vs green grapes, whole vs oat milk).
+- category is one of: ${CATS.join(", ")}.
+- perishable is true for food that spoils within about two weeks: fresh produce, fresh meat and fish, dairy, bread, leftovers, takeout.
+- Food and drink only. Skip non-food lines on receipts (paper goods, cleaning, toiletries, pharmacy).
+- If an item is already listed under a slightly different name, use the existing name exactly so there is one record ("soy sauce" when the inventory has "Kikkoman soy sauce").
+
+WHAT PEOPLE SAY
+- "We're out of X" or threw the last of it away: out. "Low on X", "almost out": low. "Bought X", "got more X", "we have X": have.
+- Out of something that was never listed: add it as out. It still helps the next shopping trip.
+- Takeout, leftovers and one-off purchases are added like anything else.
+- Corrections such as "green grapes got substituted for red grapes" change what is on the shelf. Work out which item actually arrived. A receipt or order in this conversation settles it: the item listed as ordered is the one that did not arrive. The item that arrived is "have". The one that did not arrive is removed if this conversation just added it, otherwise left alone. If you cannot tell which way round it was, ask.
+- Ask a clarifying question only when you cannot tell which item they mean or what happened, and a wrong guess would leave the inventory wrong, for example "out of milk" when both whole milk and oat milk are listed. Apply everything that is clear first, then ask one short question. If only one reading is plausible, act on it.
+- Photos may be a receipt, a screenshot of an order, or the inside of a fridge or cupboard. Add the food you can identify with confidence and mention anything you could not read.
+
+RECIPES AND QUESTIONS
+- Asked for meal ideas: give 3 unless told otherwise, built from what is have or low. Use up perishables that have been in the kitchen longest first (days are shown). For each: the dish in bold, one line on why it fits, and "Missing:" with anything not in the inventory (assume salt, pepper, oil and water). Prefer ideas that are missing nothing. Follow the household notes. Suggesting recipes never changes the inventory.
+- Answer questions about the inventory from the list in the context.
+
+STYLE
+- Do the work, then say what happened in one short sentence ("Added 14 items. Milk is out."). The screen shows every change as a tag, so do not list everything back.
+- Plain text with light Markdown (bold, short lists). No headings and no tables. Replies are read on a small kitchen screen and may be spoken aloud.
+- In BULK ADD mode the person is walking the kitchen naming things. Add everything named as "have" unless they say low or out, and reply with a few words ("Added 5.") or one short question. Fragments arrive mid-thought: if one makes no sense as food, ignore it rather than asking. A question pauses their microphone until they tap it, so ask only when a wrong guess would leave the inventory wrong.`;
+
+const RULES_TOOLS = `TOOLS
+The inventory changes only through tool calls. Never say something was added or changed unless the tool reported it.
+- set_items: add items or set their state. Put every item in ONE call. Set restock to true when the items just arrived (grocery order, shopping trip, takeout).
+- rename_item: fix a name or swap one variety for another, keeping its state.
+- remove_items: delete records that should not exist (mistakes, mishearings). Running out is state "out", not removal.
+- Receipts: when they send a photo of a grocery receipt or an order screenshot, add what was DELIVERED with restock true: found items and replacements (the replacement, not the original). Skip refunded, out-of-stock and non-food lines. If a line is unreadable, say which.
+- save_note: keep a lasting household preference they state ("we don't eat pork", "the kids hate mushrooms").
+You get only a few tool rounds per message, so batch.`;
+
+const RULES_OPS = `MAKING CHANGES
+You cannot call tools in this view. To change the inventory, end your reply with one block that the page applies and hides:
+<ops>[{"op":"set","restock":false,"items":[{"name":"red grapes","state":"have","category":"Produce","perishable":true}]},{"op":"rename","from":"old name","to":"new name"},{"op":"remove","names":["mistaken item"]},{"op":"note","text":"lasting household preference"}]</ops>
+The block is a JSON array. Include only the ops you need and leave the block out when nothing changes. "set" adds items or changes their state; set restock to true when they just arrived. "remove" deletes records that should not exist; running out is state "out". If the context includes <latest_order>, add what was DELIVERED: found items and replacements, not refunded, out-of-stock or non-food lines. If it says alreadyAdded, ask before adding again. If it has no receipt, pass on its suggestion briefly.`;
+
+/* ---------- Small helpers ---------- */
+
+function slug(name){
+  const s = String(name).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  if (s) return s;
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return "item-" + h.toString(36);
+}
+const cleanName = (n) => String(n == null ? "" : n).replace(/\s+/g, " ").trim().slice(0, 80);
+const validCat = (c) => { const t = String(c || "").trim().toLowerCase(); return CATS.find((x) => x.toLowerCase() === t) || null; };
+const isActive = (v) => !!v && STATES.includes(v.state) && typeof v.name === "string";
+const active = () => Object.entries(S.items).filter(([, v]) => isActive(v));
+const isNarrow = () => window.matchMedia("(max-width: 759.98px)").matches;
+const daysIn = (v, now) => Math.max(0, Math.floor((now - (Number(v.since) || now)) / DAY));
+
+function findKey(name){
+  const k = slug(name);
+  if (S.items[k]) return k;
+  const n = name.toLowerCase();
+  for (const [key, v] of Object.entries(S.items)) if (isActive(v) && v.name.toLowerCase() === n) return key;
+  return null;
+}
+function similar(name){
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  return active().map(([, v]) => v.name).filter((n) => words.some((w) => n.toLowerCase().includes(w))).slice(0, 6);
 }
 
-function render(flashNames = []) {
-  const groups = { have: [], low: [], out: [] };
-  for (const [name, v] of Object.entries(inventory)) (groups[v.status] || groups.have).push(name);
-  for (const status of STATUS_ORDER) {
-    const list = document.querySelector(`.list[data-status="${status}"]`);
-    list.textContent = "";
-    groups[status].sort((a, b) => a.localeCompare(b)).forEach((name) => {
-      const chip = document.createElement("span");
-      chip.className = "chip" + (flashNames.includes(name) ? " flash" : "");
-      const label = document.createElement("span");
-      label.textContent = name;
-      const x = document.createElement("span");
-      x.className = "x"; x.textContent = "✕";
-      x.addEventListener("click", (e) => { e.stopPropagation(); delete inventory[name]; saveInventory(); render(); });
-      chip.append(label, x);
-      // Tap cycles: have -> low -> out -> have
-      chip.addEventListener("click", () => {
-        const next = STATUS_ORDER[(STATUS_ORDER.indexOf(inventory[name].status) + 1) % 3];
-        inventory[name] = { status: next, updated: Date.now() };
-        saveInventory(); render([name]);
-      });
-      list.append(chip);
-    });
-    list.parentElement.querySelector(".count").textContent = groups[status].length ? `(${groups[status].length})` : "";
+function md(src){
+  const inline = (s) => s
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])\*(?!\s)([^*]+?)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+  let html = "", list = null;
+  const close = () => { if (list) { html += "</" + list + ">"; list = null; } };
+  for (const ln of esc(src).split(/\n/)) {
+    let m;
+    if ((m = ln.match(/^\s*[-*•]\s+(.*)/))) { if (list !== "ul") { close(); html += "<ul>"; list = "ul"; } html += "<li>" + inline(m[1]) + "</li>"; }
+    else if ((m = ln.match(/^\s*(\d+)[.)]\s+(.*)/))) { if (list !== "ol") { close(); html += "<ol>"; list = "ol"; } html += '<li value="' + m[1] + '">' + inline(m[2]) + "</li>"; }
+    else if (list && /^\s{2,}\S/.test(ln) && html.endsWith("</li>")) { html = html.slice(0, -5) + "<br>" + inline(ln.trim()) + "</li>"; }
+    else if ((m = ln.match(/^#{1,4}\s+(.*)/))) { close(); html += "<h4>" + inline(m[1]) + "</h4>"; }
+    else if (!ln.trim()) close();
+    else { close(); html += "<p>" + inline(ln) + "</p>"; }
+  }
+  close();
+  return html;
+}
+const plain = (s) => String(s).replace(/[*_`#>]/g, "").replace(/^\s*[-•]\s+/gm, "").replace(/\n{2,}/g, ". ").replace(/\s+/g, " ").trim();
+
+/* ---------- Database ---------- */
+
+const use = (n) => Promise.resolve(ADAPTERS[n] || null);
+
+function overlay(){ S.items = Object.assign({}, S.server, inflight || {}, pending || {}); }
+
+function subscribe(){
+  loadT = setTimeout(() => { if (!S.loaded || S.slow === null) { S.slow = true; paintBanner(); paintShelves(); } }, 10000);
+  S.slow = null;
+  db.doc("kitchen/inventory").onSnapshot((snap) => {
+    const data = snap.exists ? (snap.data() || {}) : {};
+    S.server = (data.items && typeof data.items === "object") ? data.items : {};
+    S.invExists = !!snap.exists;
+    if (!snap.metadata || !snap.metadata.fromCache) { clearTimeout(loadT); S.slow = false; }
+    S.loaded = true;
+    overlay(); paintInventory(); paintBanner();
+  }, (err) => {
+    clearTimeout(loadT); S.slow = false; S.loaded = true; S.dbError = (err && err.code) || "unavailable";
+    paintInventory(); paintBanner();
+  });
+  db.doc("kitchen/notes").onSnapshot((snap) => {
+    S.notes = snap.exists ? String((snap.data() || {}).text || "") : "";
+    if (document.activeElement !== $("notes")) $("notes").value = S.notes;
+  }, () => {});
+  db.doc("kitchen/orders").onSnapshot((snap) => { S.order = snap.exists ? (snap.data() || null) : null; }, () => {});
+}
+
+async function writePatch(p){
+  if (!db) return;
+  const ref = db.doc("kitchen/inventory");
+  if (!S.invExists) {
+    const snap = await ref.get();
+    if (snap.exists) S.invExists = true;
+    else { await ref.set({v: 1, items: p}); S.invExists = true; return; }
+  }
+  try { await ref.update({items: p}); }
+  catch (e) {
+    if (e && e.code === "invalid_argument") {
+      const snap = await ref.get();
+      if (!snap.exists) { await ref.set({v: 1, items: p}); S.invExists = true; return; }
+    }
+    if (e && e.code === "unavailable") { await new Promise((r) => setTimeout(r, 600 + Math.random() * 900)); await ref.update({items: p}); return; }
+    throw e;
   }
 }
 
-function showExchange(heard, reply) {
-  $("heard").textContent = heard ? `“${heard}”` : "";
-  $("reply").textContent = reply || "";
+function commit(patch){
+  pending = Object.assign(pending || {}, patch);
+  overlay(); paintInventory();
+  if (!flushing) {
+    flushing = (async () => {
+      try {
+        while (pending) {
+          inflight = pending; pending = null;
+          try { await writePatch(inflight); }
+          catch (e) {
+            S.saveFail = {patch: Object.assign({}, inflight, pending || {}), code: (e && e.code) || "unavailable"};
+            pending = null; inflight = null;
+            overlay(); paintInventory(); paintBanner();
+            throw e;
+          }
+          S.server = Object.assign({}, S.server, inflight);
+          inflight = null;
+        }
+        if (S.saveFail) { S.saveFail = null; paintBanner(); }
+      } finally { flushing = null; }
+    })();
+    flushing.catch(() => {});
+  }
+  return flushing;
 }
 
-/* ---------------- Sounds & speech output ---------------- */
-let chimeCtx = null;
-function chime() {
+function saveFailCopy(code){
+  if (code === "invalid_argument") return "That change wasn't saved. Your access to this page may be view-only.";
+  if (code === "quota_exceeded") return "That change wasn't saved because the inventory is full. Remove some old items first.";
+  if (code === "revoked" || code === "not_granted") return "That change wasn't saved. This view has lost access to the inventory.";
+  return "That change wasn't saved yet.";
+}
+
+/* ---------- Confirmation sound ---------- */
+
+let actx = null;
+function armSound(){
+  // Browsers only let a page make sound after a tap or key press, so this runs on each one.
+  if (!S.sound) return;
   try {
-    chimeCtx = chimeCtx || new AudioContext();
-    const t = chimeCtx.currentTime;
-    [660, 990].forEach((f, i) => {
-      const o = chimeCtx.createOscillator(), g = chimeCtx.createGain();
-      o.frequency.value = f; o.connect(g); g.connect(chimeCtx.destination);
-      g.gain.setValueAtTime(0.0001, t + i * 0.12);
-      g.gain.exponentialRampToValueAtTime(0.25, t + i * 0.12 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.2);
-      o.start(t + i * 0.12); o.stop(t + i * 0.12 + 0.22);
-    });
-  } catch {}
+    if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; actx = new AC(); }
+    if (actx.state === "suspended") { const p = actx.resume(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) { actx = null; }
+}
+function chime(n){
+  if (!S.sound || !actx || actx.state !== "running" || !(n > 0)) return;
+  try {
+    const t0 = actx.currentTime + 0.03;
+    for (let i = 0; i < Math.min(n, 8); i++) {
+      const t = t0 + i * 0.12, o = actx.createOscillator(), g = actx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(880, t);
+      o.frequency.exponentialRampToValueAtTime(1320, t + 0.06);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t); o.stop(t + 0.11);
+    }
+  } catch (e) {}
 }
 
-function speak(text) {
-  return new Promise((resolve) => {
-    if (!text || !("speechSynthesis" in window)) return resolve();
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1.05;
-    u.onend = u.onerror = () => resolve();
-    speechSynthesis.speak(u);
-    setTimeout(resolve, 12000); // safety
+/* ---------- Inventory operations (shared by Claude's tools and the buttons) ---------- */
+
+function record(turn, key, prev, change){
+  if (!turn) return;
+  if (!(key in turn.undo)) turn.undo[key] = prev ? Object.assign({}, prev) : null;
+  turn.changes.push(change);
+}
+
+async function opSet(list, restock, turn){
+  if (!Array.isArray(list) || !list.length) throw new Error("items must be a non-empty array of {name, state}.");
+  if (list.length > 250) throw new Error("Too many items in one call. Send at most 250.");
+  const now = Date.now(), patch = {}, rep = {added: [], changed: [], alreadySo: []};
+  for (const raw of list) {
+    const name = cleanName(raw && raw.name);
+    if (!name) continue;
+    const st = String((raw && raw.state) || "have").toLowerCase();
+    if (!STATES.includes(st)) throw new Error('state must be "have", "low" or "out" (got "' + raw.state + '" for ' + name + ").");
+    const key = findKey(name) || slug(name);
+    const cur = patch[key] || S.items[key] || null;
+    const was = isActive(cur) ? cur : null;
+    const next = {
+      name: was ? was.name : name,
+      state: st,
+      cat: validCat(raw.category) || (cur && validCat(cur.cat)) || "Other",
+      per: typeof raw.perishable === "boolean" ? raw.perishable : !!(cur && cur.per),
+      since: (was && Number(was.since)) || now,
+      upd: now
+    };
+    if (st === "have" && (!was || was.state !== "have" || restock)) next.since = now;
+    if (was && was.state === st && was.cat === next.cat && !!was.per === next.per && next.since === was.since) { rep.alreadySo.push(was.name); continue; }
+    patch[key] = next;
+    if (!was) { rep.added.push(next.name); record(turn, key, cur, {kind: "add", name: next.name, state: st}); }
+    else if (was.state !== st) { rep.changed.push(next.name + ": " + was.state + " to " + st); record(turn, key, cur, {kind: "state", name: next.name, state: st, from: was.state}); }
+    else { rep.alreadySo.push(next.name); record(turn, key, cur, {kind: "touch", name: next.name, state: st}); }
+  }
+  if (Object.keys(patch).length) await commit(patch);
+  if (turn) chime(rep.added.length + rep.changed.length);
+  return rep;
+}
+
+async function opRename(from, to, turn){
+  const a = cleanName(from), b = cleanName(to);
+  if (!a || !b) throw new Error("rename needs both from and to.");
+  const key = findKey(a), cur = key ? S.items[key] : null;
+  if (!isActive(cur)) { const s = similar(a); throw new Error('No item named "' + a + '" in the inventory.' + (s.length ? " Close matches: " + s.join("; ") + "." : "")); }
+  const now = Date.now(), nk = slug(b), patch = {};
+  if (nk === key) { patch[key] = Object.assign({}, cur, {name: b, upd: now}); record(turn, key, cur, {kind: "rename", name: b, from: cur.name, state: cur.state}); }
+  else {
+    const target = S.items[nk] || null;
+    patch[nk] = Object.assign({}, cur, {name: b, upd: now});
+    patch[key] = Object.assign({}, cur, {state: "removed", upd: now});
+    record(turn, nk, target, {kind: "rename", name: b, from: cur.name, state: cur.state});
+    record(turn, key, cur, {kind: "quiet"});
+  }
+  await commit(patch);
+  if (turn) chime(1);
+  return {renamed: cur.name + " to " + b};
+}
+
+async function opRemove(names, turn){
+  if (!Array.isArray(names) || !names.length) throw new Error("names must be a non-empty array.");
+  const now = Date.now(), patch = {}, rep = {removed: [], notFound: []};
+  for (const raw of names) {
+    const n = cleanName(raw), key = n ? findKey(n) : null, cur = key ? S.items[key] : null;
+    if (!isActive(cur)) { if (n) rep.notFound.push(n); continue; }
+    patch[key] = Object.assign({}, cur, {state: "removed", upd: now});
+    rep.removed.push(cur.name);
+    record(turn, key, cur, {kind: "remove", name: cur.name});
+  }
+  if (Object.keys(patch).length) await commit(patch);
+  if (turn) chime(rep.removed.length);
+  return rep;
+}
+
+async function opNote(text, turn){
+  const line = cleanName(text).slice(0, 300);
+  if (!line) throw new Error("note text is empty.");
+  const next = (S.notes.trim() ? S.notes.trim() + "\n" : "") + line;
+  await saveNotes(next);
+  if (turn) turn.changes.push({kind: "note", name: line});
+  return {saved: line};
+}
+
+async function saveNotes(text){
+  const t = String(text).slice(0, 4000);
+  S.notes = t;
+  if (document.activeElement !== $("notes")) $("notes").value = t;
+  if (db) await db.doc("kitchen/notes").set({text: t, upd: Date.now()});
+}
+
+async function applyOps(ops, turn){
+  for (const op of ops) {
+    if (!op || typeof op !== "object") continue;
+    if (op.op === "set") await opSet(op.items, !!op.restock, turn);
+    else if (op.op === "rename") await opRename(op.from, op.to, turn);
+    else if (op.op === "remove") await opRemove(op.names, turn);
+    else if (op.op === "note") await opNote(op.text, turn);
+  }
+}
+
+async function undoTurn(m){
+  if (!m.undo || m.undone) return;
+  const now = Date.now(), patch = {};
+  for (const [key, prev] of Object.entries(m.undo)) {
+    if (prev) patch[key] = Object.assign({}, prev, {upd: now});
+    else if (S.items[key]) patch[key] = Object.assign({}, S.items[key], {state: "removed", upd: now});
+  }
+  m.undone = true; paintMsg(m);
+  S.lastChanges = "The person tapped Undo, so the changes from one of your earlier replies were reverted.";
+  if (m.orderId && db && S.order && S.order.lastId === m.orderId) db.doc("kitchen/orders").set({lastId: "", at: Date.now()}).catch(() => {});
+  try { await commit(patch); } catch (e) {}
+}
+
+/* ---------- Latest Instacart order, from Gmail ---------- */
+
+const NO_GMAIL_TAIL = " Suggest instead: attach a screenshot of the order from the Instacart app with the camera button, or paste the receipt text.";
+function gmailCopy(e){
+  const c = e && e.code;
+  if (c === "server_not_connected") return "Gmail isn't connected to this Claude account. It can be added in claude.ai under Settings, Connectors." + NO_GMAIL_TAIL;
+  if (c === "needs_reauth") return "Gmail needs to be reconnected in claude.ai under Settings, Connectors." + NO_GMAIL_TAIL;
+  if (c === "not_in_manifest" || c === "not_granted" || c === "approval_required" || c === "consent_required" || c === "blocked_by_policy") return "Gmail access wasn't allowed for this page." + NO_GMAIL_TAIL;
+  if (c === "selection_required") return "More than one Gmail connector is set up and none has been chosen for this page yet." + NO_GMAIL_TAIL;
+  return "Gmail couldn't be reached just now. Trying again in a minute may work." + NO_GMAIL_TAIL;
+}
+const asObj = (p) => { if (p && typeof p === "object") return p; if (typeof p === "string") { try { return JSON.parse(p); } catch (e) { return {}; } } return {}; };
+const tidyMail = (s) => String(s).replace(/\(?https?:\/\/[^\s)]+\)?/g, "").replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*\n+/g, "\n\n").trim();
+
+async function fetchLatestOrder(turn, setStatus, signal){
+  if (!mcp) throw new Error("This view can't reach Gmail." + NO_GMAIL_TAIL);
+  setStatus("Looking in Gmail for the latest Instacart receipt");
+  let found;
+  try { found = asObj((await mcp.callTool("Gmail", "search_threads", {query: "instacart newer_than:30d", pageSize: 15, view: "THREAD_VIEW_SUMMARY"}, {signal})).payload); }
+  catch (e) { throw new Error(gmailCopy(e)); }
+  const threads = Array.isArray(found.threads) ? found.threads : [];
+  const confirmations = [], candidates = [];
+  for (const t of threads) {
+    const msgs = Array.isArray(t.messages) ? t.messages : [];
+    const subj = String((msgs[msgs.length - 1] || {}).subject || "");
+    if (/shop together/i.test(subj)) continue;
+    if (/is confirmed for/i.test(subj)) { confirmations.push(subj); continue; }
+    if (t.id) candidates.push({id: t.id, subject: subj});
+  }
+  let best = null;
+  for (const c of candidates.slice(0, 4)) {
+    if (signal && signal.aborted) break;
+    setStatus("Reading " + (c.subject ? "“" + c.subject.slice(0, 48) + "”" : "an Instacart email"));
+    let th;
+    try { th = asObj((await mcp.callTool("Gmail", "get_thread", {threadId: c.id, messageFormat: "PLAIN_TEXT"}, {signal})).payload); }
+    catch (e) { continue; }
+    for (const msg of (Array.isArray(th.messages) ? th.messages : [])) {
+      const body = tidyMail(msg.plaintextBody || "");
+      if ((body.match(/\$\s?\d+\.\d{2}/g) || []).length < 3) continue;
+      const when = Number(msg.internalDate) || Date.parse(msg.date) || 0;
+      if (!best || when > best.when) best = {id: String(msg.id || c.id), subject: String(msg.subject || c.subject), when, body};
+    }
+  }
+  setStatus("");
+  if (!best) {
+    return {
+      found: false,
+      note: "No itemized Instacart receipt is in this Gmail from the last 30 days." + (confirmations.length ? " There are order confirmations, but those emails carry no item list." : "") + " Itemized receipts go to the Instacart account holder." + NO_GMAIL_TAIL + " To make this button work by itself, the account holder can set Gmail to auto-forward Instacart receipts to this inbox.",
+      confirmationsSeen: confirmations.slice(0, 3)
+    };
+  }
+  if (turn) turn.order = {id: best.id, subject: best.subject.slice(0, 160), when: best.when};
+  const again = S.order && S.order.lastId === best.id;
+  return {
+    found: true,
+    subject: best.subject,
+    received: best.when ? new Date(best.when).toDateString() : "unknown date",
+    alreadyAdded: again ? "This same receipt was already added on " + new Date(Number(S.order.at) || Date.now()).toDateString() + "." : false,
+    receipt: best.body.slice(0, 14000)
+  };
+}
+
+/* ---------- Talking to Claude ---------- */
+
+function buildTools(turn, setStatus){
+  return [
+    {
+      name: "set_items",
+      description: "Add items to the inventory or set the state of existing ones. One call can carry every item. Returns which names were added, which changed state, and which were already in that state.",
+      inputSchema: {type: "object", properties: {
+        items: {type: "array", items: {type: "object", properties: {
+          name: {type: "string", description: "Short household name. Reuse the exact existing name when the item is already listed."},
+          state: {type: "string", enum: STATES},
+          category: {type: "string", enum: CATS},
+          perishable: {type: "boolean"}
+        }, required: ["name", "state"]}},
+        restock: {type: "boolean", description: "true when these items just arrived (grocery order, shopping trip, takeout)."}
+      }, required: ["items"]},
+      async execute(input){ setStatus("Updating the inventory"); const r = await opSet(input.items, input.restock === true, turn); setStatus(""); return r; }
+    },
+    {
+      name: "rename_item",
+      description: "Rename one item, keeping its state. Use it to fix a name or swap one variety for another. Returns the old and new name, or an error listing close matches.",
+      inputSchema: {type: "object", properties: {from: {type: "string"}, to: {type: "string"}}, required: ["from", "to"]},
+      async execute(input){ return opRename(input.from, input.to, turn); }
+    },
+    {
+      name: "remove_items",
+      description: "Delete records that should not exist, such as mistakes or mishearings. Not for running out: use set_items with state out. Returns removed and notFound names.",
+      inputSchema: {type: "object", properties: {names: {type: "array", items: {type: "string"}}}, required: ["names"]},
+      async execute(input){ return opRemove(input.names, turn); }
+    },
+    {
+      name: "get_latest_grocery_order",
+      description: "Fetch the newest itemized Instacart receipt from the person's Gmail. Returns {found, subject, received, alreadyAdded, receipt} with the receipt text, or {found:false, note} explaining what to suggest instead.",
+      async execute(input, ctx){ return fetchLatestOrder(turn, setStatus, ctx && ctx.signal); }
+    },
+    {
+      name: "save_note",
+      description: "Save one lasting household preference to the notes that are shown to you in every message. Returns the saved line.",
+      inputSchema: {type: "object", properties: {note: {type: "string"}}, required: ["note"]},
+      async execute(input){ return opNote(input.note, turn); }
+    }
+  ];
+}
+
+function inventoryText(){
+  const now = Date.now(), by = {}, out = [];
+  for (const [, v] of active()) {
+    if (v.state === "out") { out.push(v.name); continue; }
+    const flags = [];
+    if (v.state === "low") flags.push("low");
+    if (v.per) flags.push(daysIn(v, now) + "d");
+    const c = validCat(v.cat) || "Other";
+    (by[c] || (by[c] = [])).push(v.name + (flags.length ? " [" + flags.join(", ") + "]" : ""));
+  }
+  const lines = CATS.filter((c) => by[c]).map((c) => c + ": " + by[c].sort().join("; "));
+  if (out.length) lines.push("OUT OF: " + out.sort().join("; "));
+  return lines.length ? lines.join("\n") : "(empty: nothing has been added yet)";
+}
+
+function trimHistory(){
+  let h = S.history.slice(-16), total = h.reduce((n, t) => n + t.content.length, 0);
+  while (h.length && (total > 14000 || h[0].role !== "user")) { total -= h[0].content.length; h = h.slice(1); }
+  return h;
+}
+
+function buildInput(text, o){
+  const ctx = [
+    "<context>",
+    "Now: " + new Date().toLocaleString("en-US", {weekday: "long", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit"}),
+    "Mode: " + (o.bulk ? "BULK ADD (voice stock-take, reply in a few words)" : "chat"),
+    "Input: " + ({voice: "voice transcript", order: "button press", typed: "typed"}[o.source] || "typed") + (o.photos ? ", with " + o.photos + " photo(s) attached" : ""),
+    S.notes.trim() ? "Household notes:\n" + S.notes.trim().slice(0, 2000) : "Household notes: (none yet)"
+  ];
+  if (S.lastChanges) ctx.push("Since your last reply: " + S.lastChanges);
+  ctx.push("Inventory, " + active().length + " items. [low] = running low. [Nd] = perishable, N days in the kitchen.");
+  ctx.push(inventoryText());
+  ctx.push("</context>" + (o.extra || ""));
+  ctx.push("");
+  ctx.push(text);
+  return [{role: "user", content: RULES + "\n\n" + (S.toolsOk ? RULES_TOOLS : RULES_OPS)}].concat(trimHistory(), [{role: "user", content: ctx.join("\n")}]);
+}
+
+function pickTier(text, hasImages, bulk){
+  let tier = "quick";
+  if (!bulk && (hasImages || text.length > 240
+    || /\b(recipe|recipes|suggest|dinner|dinners|lunch|breakfast|brunch|cook|meal|meals|ideas?|make with|what can (i|we))\b/i.test(text)
+    || /\b(order|instacart|receipt|deliver|delivery|delivered|substitut\w*|replac\w*|swap\w*|instead)\b/i.test(text))) tier = "default";
+  const ok = (limits && Array.isArray(limits.modelTiers)) ? limits.modelTiers : ["default", "complex", "quick"];
+  return ok.includes(tier) ? tier : null;
+}
+
+function splitOps(text){
+  const i = text.lastIndexOf("<ops>");
+  if (i < 0) return {say: text.trim(), ops: []};
+  const rest = text.slice(i + 5), j = rest.indexOf("</ops>");
+  const raw = (j >= 0 ? rest.slice(0, j) : rest).trim();
+  let ops = null;
+  try { const v = JSON.parse(raw); ops = Array.isArray(v) ? v : [v]; } catch (e) { ops = null; }
+  return {say: text.slice(0, i).trim(), ops};
+}
+
+function errorCopy(e){
+  switch (e && e.code) {
+    case "cancelled": return null;
+    case "no_key": return "Add your Claude API key in Settings (top right) so I can update the inventory.";
+    case "bad_key": return "Your Claude API key wasn't accepted. Check it in Settings.";
+    case "no_credit": return "Your Claude API account is out of credit. Add credits in the Claude Console.";
+    case "not_granted": case "sampling_disabled": case "not_declared": case "capability_disabled": case "capability_removed":
+      S.claudeOff = true; return "Claude isn't available in this view. You can still update items by hand.";
+    case "rate_limited": return e.reason === "usage_limit" ? "You've reached your Claude usage limit. Try again later." : "Claude is busy right now. Try again in a moment.";
+    case "session_expired": return "Sign in to Claude again, then send that once more.";
+    case "image_rejected": return "That photo couldn't be read. Try a JPEG or PNG under 20 MB.";
+    case "images_unavailable": S.canImages = false; return "Photos can't be sent from this view. Type or paste the items instead.";
+    case "refused": return "Claude declined that one. Try wording it differently.";
+    case "empty_completion": return "Claude didn't answer. Try saying it another way.";
+    case "prompt_too_large": return "That was too much text at once. Send it in smaller pieces.";
+    default: return "Claude couldn't be reached. Send it again in a moment.";
+  }
+}
+
+function describeChanges(changes){
+  const parts = [];
+  for (const c of changes) {
+    if (c.kind === "add") parts.push("added " + c.name + " (" + c.state + ")");
+    else if (c.kind === "state") parts.push(c.name + " " + c.from + " to " + c.state);
+    else if (c.kind === "rename") parts.push("renamed " + c.from + " to " + c.name);
+    else if (c.kind === "remove") parts.push("removed " + c.name);
+    else if (c.kind === "note") parts.push("saved note");
+  }
+  return parts.slice(0, 60).join("; ");
+}
+
+function chipsFrom(changes){
+  const chips = [];
+  for (const c of changes) {
+    if (c.kind === "add") chips.push({t: "+ " + c.name + (c.state !== "have" ? " · " + LABEL[c.state] : ""), s: c.state});
+    else if (c.kind === "state") chips.push({t: c.name + " → " + LABEL[c.state], s: c.state});
+    else if (c.kind === "rename") chips.push({t: c.from + " → " + c.name, s: "have"});
+    else if (c.kind === "remove") chips.push({t: c.name, s: "gone"});
+    else if (c.kind === "note") chips.push({t: "Note saved", s: "have"});
+  }
+  return chips;
+}
+
+async function runTurn(args){
+  await sampleReady;
+  const images = (args.images && args.images.length) ? args.images : null;
+  const text = args.text || (images ? "Add the food in " + (images.length > 1 ? "these photos." : "this photo.") : "");
+  if (!text) return;
+  stopVoice();
+  const u = addMsg({role: "user", text, photos: images ? images.length : 0});
+  if (!sample || S.claudeOff) { S.claudeOff = true; addMsg({role: "claude", text: "", error: "Claude isn't available in this view. You can still update items by hand."}); paintComposer(); return; }
+  const m = addMsg({role: "claude", text: "", thinking: true, status: "", chips: [], undo: null});
+  const turn = {changes: [], undo: {}, order: null};
+  S.busy = true; S.ctl = new AbortController(); paintComposer();
+  const setStatus = (s) => { m.status = s; if (m.thinking) paintMsg(m); paintStatus(); };
+  paintStatus();
+
+  let extra = "";
+  if (!S.toolsOk && (args.source === "order" || /\b(order|instacart|receipt|deliver\w*)\b/i.test(text))) {
+    try { extra = "\n<latest_order>\n" + JSON.stringify(await fetchLatestOrder(turn, setStatus, S.ctl.signal)) + "\n</latest_order>"; }
+    catch (e) { extra = "\n<latest_order>\nUnavailable. " + ((e && e.message) || "") + "\n</latest_order>"; }
+    setStatus("");
+  }
+
+  const opts = {
+    cache: false, signal: S.ctl.signal,
+    onText: (upd) => { m.thinking = false; m.text = S.toolsOk ? upd.text : upd.text.split("<ops>")[0]; paintMsg(m); }
+  };
+  const tier = pickTier(text, !!images, !!args.bulk);
+  if (tier) opts.modelTier = tier;
+  if (S.toolsOk) opts.tools = buildTools(turn, setStatus).filter((t) => t.name !== "get_latest_grocery_order");
+  if (images) opts.images = images;
+
+  let finalText = "", err = null;
+  try {
+    const res = await sample(buildInput(text, {source: args.source, bulk: !!args.bulk, extra, photos: images ? images.length : 0}), opts);
+    finalText = (res && res.text) || "";
+    if (res && res.truncated) m.note = "Cut short. Ask for less at a time.";
+  } catch (e) {
+    err = (e && typeof e === "object") ? e : {code: "upstream_error"};
+    finalText = err.text || "";
+  }
+
+  if (err && err.code === "tools_unavailable" && S.toolsOk && !S.fellBack) {
+    S.toolsOk = false; S.fellBack = true; S.busy = false; S.ctl = null;
+    S.feed = S.feed.filter((x) => x !== u && x !== m); paintFeed();
+    return runTurn(args);
+  }
+
+  if (!S.toolsOk && finalText) {
+    const sp = splitOps(finalText);
+    finalText = sp.say;
+    if (sp.ops === null) m.note = "Claude's changes couldn't be read, so nothing was changed. Try that again.";
+    else if (sp.ops.length && !(err && err.code === "refused")) {
+      try { await applyOps(sp.ops, turn); } catch (e2) { m.note = "Some changes couldn't be applied. " + ((e2 && e2.message) || ""); }
+    }
+  }
+
+  m.thinking = false; m.status = "";
+  m.text = finalText.trim();
+  m.chips = chipsFrom(turn.changes);
+  if (Object.keys(turn.undo).length) m.undo = turn.undo;
+  if (err) { const copy = errorCopy(err); if (copy) m.error = copy; else if (!m.note) m.note = "Stopped."; }
+  if (!m.text && !m.error && m.chips.length) m.text = "Done.";
+
+  S.history.push({role: "user", content: text + (images ? "\n(" + images.length + " photo(s) were attached to this message.)" : "")});
+  if (m.text) S.history.push({role: "assistant", content: m.text});
+  if (S.history.length > 40) S.history.splice(0, S.history.length - 40);
+  S.lastChanges = describeChanges(turn.changes);
+
+  if (turn.order && db && turn.changes.some((c) => c.kind === "add" || c.kind === "state" || c.kind === "touch")) {
+    m.orderId = turn.order.id;
+    db.doc("kitchen/orders").set({lastId: turn.order.id, subject: turn.order.subject, when: turn.order.when, at: Date.now()}).catch(() => {});
+  }
+  if (args.bulk) {
+    S.bulkCount += turn.changes.filter((c) => c.kind === "add").length;
+    S.bulkReply = m.error || m.text || "";
+  }
+
+  S.busy = false; S.ctl = null;
+  paintMsg(m); paintComposer(); paintStatus(); paintBulk();
+
+  const shown = m.error || m.text;
+  if (!args.bulk && shown && isNarrow() && S.view !== "chat") {
+    if (shown.length <= 150 && !/\n/.test(shown)) showToast(shown);
+    else setView("chat", true);
+  }
+  if (!args.bulk && S.speak && tts && m.text && !(dict && dict.active())) speakReply(m.text);
+  if (args.bulk && S.bulk && !S.bulkEnding && S.speak && tts && !S.claudeOff) {
+    if (m.error) await askAloud(m.error, "error", (!turn.changes.length && err && err.code !== "refused") ? text : "");
+    else if (/\?/.test(m.text)) await askAloud(m.text, "question", "");
+  }
+  if (S.bulkBuf.trim() && !S.partial) flushBulk();
+}
+
+/* ---------- Voice ---------- */
+
+function paintVoice(){ $("btn-hush").hidden = !S.speaking; }
+function stopVoice(){
+  S.speakSeq++;
+  if (tts) { try { tts.stop(); } catch (e) {} }
+  if (S.speaking) { S.speaking = false; paintVoice(); }
+}
+function speakReply(text, again){
+  if (!tts) return;
+  const mine = ++S.speakSeq;
+  let p;
+  try { p = tts.speak(plain(text).slice(0, 1800)); } catch (e) { return; }
+  S.speaking = true; paintVoice();
+  const done = () => { if (mine === S.speakSeq) { S.speaking = false; paintVoice(); } };
+  Promise.resolve(p).then(done, (e) => {
+    if (e && e.code === "busy" && !again && mine === S.speakSeq) setTimeout(() => { if (mine === S.speakSeq) speakReply(text, true); }, 500);
+    else done();
   });
 }
 
-/* ---------------- Wake word (openWakeWord in the browser) ---------------- */
-// Pipeline (mirrors openWakeWord's Python streaming code):
-//   16 kHz audio, 1280-sample chunks (80 ms)
-//   -> melspectrogram.onnx  (frames of 32 mel bins, transformed x/10+2)
-//   -> embedding_model.onnx (76 mel frames -> 96-dim embedding)
-//   -> wake model           (last 16 embeddings -> score 0..1)
-class WakeWord {
-  constructor({ modelBase, wakeFile, threshold, onWake, onLevel }) {
-    Object.assign(this, { modelBase, wakeFile, threshold, onWake, onLevel });
-    this.running = false; this.busy = false; this.queue = [];
-    this.lastWake = 0;
+/* Bulk add: something needs the person (a question, or a failed batch). The browser will not speak
+   while the mic is open, so close the mic, say it, and hold everything until they tap the mic again. */
+async function askAloud(text, kind, requeue){
+  if (hasMic() && dict.active()) {
+    S.asking = kind; S.micPaused = true;
+    clearTimeout(silenceT);
+    try { await dict.stop(); } catch (e) {}
+    clearTimeout(silenceT);
+    if (requeue) S.bulkBuf = requeue + (S.bulkBuf ? " " + S.bulkBuf : "");
+    paintBulk(); paintComposer();
+  }
+  speakReply(text);
+}
+
+function initDictation(){
+  dict.onPartial((e) => { S.partial = (e && e.text) || ""; if (S.partial) clearTimeout(silenceT); if (!S.bulk && !say.value) say.placeholder = S.partial || "Listening"; paintBulk(); });
+  dict.onFinal((e) => heard((e && e.text) || ""));
+  dict.onState((e) => {
+    S.mic = e.state;
+    if (e.state === "listening") { S.micPaused = false; S.asking = false; }
+    if (e.state === "idle") micIdle(e.reason);
+    paintComposer(); paintBulk();
+  });
+}
+
+function startMic(mode){
+  S.voice = mode; S.asking = false;
+  const p = dict.start();
+  stopVoice();
+  p.catch(micError);
+}
+
+function micError(e){
+  const c = e && e.code;
+  if (c === "not_granted") { S.micGone = true; showToast("The microphone is off for this page. Typing still works."); }
+  else if (c === "unavailable") { S.micGone = true; }
+  else if (c === "rate_limited") showToast("Dictation is busy. Try again in a moment.");
+  else if (c === "upstream_error") showToast("The microphone didn't start. Try again.");
+  if (S.bulk) S.micPaused = true;
+  paintComposer(); paintBulk();
+}
+
+function heard(text){
+  if (!text) return;
+  S.partial = "";
+  if (S.bulk || S.bulkEnding) {
+    S.bulkBuf += text;
+    paintBulk();
+    clearTimeout(silenceT);
+    silenceT = setTimeout(flushBulk, 1300);
+    return;
+  }
+  say.value = (say.value + text).replace(/^\s+/, "");
+  autosize();
+  clearTimeout(silenceT);
+  silenceT = setTimeout(finishSingle, 1600);
+}
+
+async function finishSingle(){
+  clearTimeout(silenceT);
+  if (dict && dict.active()) { try { await dict.stop(); } catch (e) {} }
+  clearTimeout(silenceT);
+  if (!S.busy && say.value.trim()) submitText("voice");
+}
+
+function micIdle(reason){
+  clearTimeout(silenceT);
+  if (reason === "not_granted" || reason === "unavailable") S.micGone = true;
+  if (S.bulk && !S.bulkEnding && reason !== "stopped") S.micPaused = true;
+  if (S.bulk && S.bulkBuf.trim() && !S.busy) flushBulk();
+}
+
+function flushBulk(){
+  clearTimeout(silenceT);
+  if (S.busy || S.asking) return;
+  const t = S.bulkBuf.trim();
+  if (!t) return;
+  S.bulkBuf = "";
+  paintBulk();
+  runTurn({text: t, source: "voice", bulk: true});
+}
+
+/* Bulk add without a page microphone (phone apps): the words arrive through the keyboard, typed or
+   dictated with its mic key. Each pause sends only what is new. The box is left alone while it has
+   focus, because clearing a field mid-dictation makes some keyboards re-insert the text. */
+function kbFlush(clear){
+  clearTimeout(kbT);
+  const v = say.value, sent = S.kbSent;
+  let i = 0;
+  const n = Math.min(v.length, sent.length);
+  while (i < n && v[i] === sent[i]) i++;
+  let start = i;
+  const midWord = i > 0 && i < v.length && /[\p{L}\p{N}]/u.test(v[i - 1]) && /[\p{L}\p{N}]/u.test(v[i]);
+  if (i < sent.length || midWord) {
+    let back = 3;
+    while (start > 0 && back > 0) { start--; if (start === 0 || (/\s/.test(v[start - 1]) && /\S/.test(v[start]))) back--; }
+  }
+  const d = v.slice(start).trim();
+  S.kbSent = v;
+  if (clear) { say.value = ""; S.kbSent = ""; autosize(); }
+  if (!d) return;
+  S.bulkBuf += (S.bulkBuf ? " " : "") + d;
+  paintBulk();
+  flushBulk();
+}
+
+function startBulk(){
+  S.bulk = true; S.bulkCount = 0; S.bulkBuf = ""; S.bulkReply = ""; S.micPaused = false; S.kbSent = "";
+  if (hasMic()) { if (!dict.active()) startMic("bulk"); else S.voice = "bulk"; }
+  else { try { say.focus(); } catch (e) {} }
+  paintBulk(); paintComposer();
+}
+
+async function endBulk(){
+  if (!S.bulk) return;
+  S.asking = false; stopVoice();
+  if (!hasMic()) kbFlush(true);
+  S.bulkEnding = true;
+  if (dict && dict.active()) { try { await dict.stop(); } catch (e) {} }
+  S.bulk = false; S.micPaused = false;
+  paintBulk(); paintComposer();
+  if (S.bulkBuf.trim() && !S.busy) flushBulk();
+  S.bulkEnding = false;
+  const n = S.bulkCount;
+  if (isNarrow() && S.view !== "chat") showToast(n ? "Bulk add finished. " + n + " item" + (n === 1 ? "" : "s") + " added." : "Bulk add finished.");
+}
+
+/* ---------- Sending ---------- */
+
+function submitText(source){
+  let text = say.value.trim();
+  const images = S.attach.slice();
+  if (!text && !images.length) return;
+  if (S.busy) {
+    if (S.bulk && text) { S.bulkBuf += (S.bulkBuf ? " " : "") + text; say.value = ""; autosize(); paintBulk(); }
+    return;
+  }
+  say.value = ""; autosize();
+  S.attach = []; paintAttach();
+  if (S.bulk && S.asking) {
+    S.asking = false;
+    if (S.bulkBuf.trim()) { text = (S.bulkBuf.trim() + " " + text).trim(); S.bulkBuf = ""; }
+  }
+  runTurn({text, images, source: source || "typed", bulk: S.bulk});
+}
+
+/* ---------- Painting ---------- */
+
+function paintTallies(){
+  const n = {have: 0, low: 0, out: 0};
+  for (const [, v] of active()) n[v.state]++;
+  for (const s of STATES) $("n-" + s).textContent = n[s];
+  document.querySelectorAll(".tally").forEach((b) => {
+    const f = b.dataset.filter;
+    b.setAttribute("aria-pressed", String(S.filter === f));
+    b.classList.toggle("hot", f !== "have" && n[f] > 0);
+  });
+}
+
+function rowHTML(key, v, now){
+  if (S.editing === key) {
+    return '<li class="row editing" data-k="' + esc(key) + '"><div class="edit">'
+      + '<input id="edit-name" type="text" value="' + esc(v.name) + '" maxlength="80" aria-label="Item name">'
+      + '<button class="primary" type="button" data-act="save">Save</button>'
+      + '<button class="danger" type="button" data-act="remove">Remove</button>'
+      + '<button type="button" data-act="cancel">Cancel</button></div></li>';
+  }
+  let age = "";
+  if (v.per && v.state !== "out") {
+    const d = daysIn(v, now);
+    if (d >= 1) age = '<span class="age' + (d >= 7 ? " old" : "") + '" title="In the kitchen ' + d + " day" + (d === 1 ? "" : "s") + '">' + d + "d</span>";
+  }
+  const seg = STATES.map((s) => '<button type="button" data-act="set" data-s="' + s + '" aria-pressed="' + (v.state === s) + '">' + LABEL[s] + "</button>").join("");
+  return '<li class="row" data-k="' + esc(key) + '" data-s="' + v.state + '">'
+    + '<button class="name" type="button" data-act="edit" title="Rename or remove">' + esc(v.name) + age + "</button>"
+    + '<div class="seg" role="group" aria-label="' + esc(v.name) + '">' + seg + "</div></li>";
+}
+
+function paintShelves(){
+  if (S.editing && document.activeElement && document.activeElement.id === "edit-name") { S.dirty = true; return; }
+  S.dirty = false;
+  const all = active();
+  if (!S.loaded) { shelves.innerHTML = '<div class="blank"><p>' + (S.slow ? "The saved inventory can't be reached yet. Still trying." : "Opening the inventory") + "</p></div>"; return; }
+  if (!all.length) {
+    shelves.innerHTML = '<div class="blank"><h2>Nothing on the shelves yet</h2><p>Walk through the fridge, freezer and cupboards and name what you see. Claude adds each thing as you go.</p><button type="button" data-act="bulk">Start bulk add</button></div>';
+    return;
+  }
+  const q = S.query.trim().toLowerCase(), now = Date.now();
+  const rows = all.filter(([, v]) => (S.filter === "all" || v.state === S.filter) && (!q || v.name.toLowerCase().includes(q)));
+  if (!rows.length) {
+    shelves.innerHTML = '<div class="blank"><p>' + (q ? "Nothing here matches that." : "Nothing is " + (S.filter === "have" ? "fully stocked" : S.filter === "low" ? "running low" : "out") + " right now.") + "</p></div>";
+    return;
+  }
+  const byName = (a, b) => a[1].name.localeCompare(b[1].name, undefined, {sensitivity: "base"});
+  const groups = [];
+  const stocked = S.filter === "all" ? rows.filter(([, v]) => v.state !== "out") : rows;
+  for (const c of CATS) {
+    const g = stocked.filter(([, v]) => (validCat(v.cat) || "Other") === c).sort(byName);
+    if (g.length) groups.push({title: c, rows: g, out: false});
+  }
+  if (S.filter === "all") {
+    const g = rows.filter(([, v]) => v.state === "out").sort(byName);
+    if (g.length) groups.push({title: "Out of", rows: g, out: true});
+  }
+  shelves.innerHTML = groups.map((g) => '<h2 class="shelf-h' + (g.out ? " out-h" : "") + '">' + esc(g.title) + ' <span class="c">' + g.rows.length + '</span></h2><ul class="rows">' + g.rows.map(([k, v]) => rowHTML(k, v, now)).join("") + "</ul>").join("");
+  if (S.editing) { const el = $("edit-name"); if (!el) S.editing = null; else if (S.focusEdit) { S.focusEdit = false; el.focus(); el.select(); } }
+}
+
+function paintFinder(){
+  const q = cleanName(S.query), b = $("btn-add");
+  const exists = q && active().some(([, v]) => v.name.toLowerCase() === q.toLowerCase());
+  b.hidden = !q || exists;
+  if (q) b.textContent = "Add “" + q + "”";
+}
+
+function paintInventory(){ paintTallies(); paintShelves(); paintFinder(); }
+
+function paintBanner(){
+  const b = $("banner");
+  let html = "";
+  if (S.localOnly) html = "Saved on this device only. Add your Google Sheet link in Settings to keep it in sync.";
+  else if (S.syncErr) html = "Can't reach the Google Sheet right now. Changes are kept here and will sync.";
+  else if (S.dbOff) html = "This view can't reach the saved inventory, so nothing you change here is kept.";
+  else if (S.dbError) html = "The saved inventory stopped updating in this view. Close and reopen the page to reconnect.";
+  else if (S.saveFail) html = esc(saveFailCopy(S.saveFail.code)) + ' <button type="button" id="retry-save">Try again</button>';
+  else if (S.slow && S.loaded) html = "The inventory shown may be out of date. Still reconnecting.";
+  b.hidden = !html;
+  b.innerHTML = html;
+}
+
+function msgHTML(m){
+  if (m.role === "user") {
+    return '<div class="msg user" data-id="' + m.id + '">' + (m.photos ? '<span class="cap">' + m.photos + " photo" + (m.photos > 1 ? "s" : "") + " attached</span>" : "") + esc(m.text) + "</div>";
+  }
+  let body = "";
+  if (m.thinking) body = '<span class="thinking">' + esc(m.status || "Thinking") + "</span>";
+  else if (m.text) body = md(m.text);
+  let chips = "";
+  if (m.chips && m.chips.length) {
+    const show = (m.open || m.chips.length <= 10) ? m.chips : m.chips.slice(0, 8);
+    chips = '<div class="chips">' + show.map((c) => '<span class="chip ' + c.s + '">' + esc(c.t) + "</span>").join("")
+      + (show.length < m.chips.length ? '<button class="chip" type="button" data-act="more" data-id="' + m.id + '">Show all ' + m.chips.length + "</button>" : "") + "</div>";
+  }
+  const acts = (m.undo && !m.thinking) ? '<div class="acts">' + (m.undone ? '<span class="note">Undone</span>' : '<button type="button" data-act="undo" data-id="' + m.id + '">Undo</button>') + "</div>" : "";
+  return '<article class="msg claude' + (m.undone ? " undone" : "") + '" data-id="' + m.id + '"><div class="who">Claude</div><div class="body">' + body + "</div>"
+    + (m.note ? '<p class="note">' + esc(m.note) + "</p>" : "") + (m.error ? '<p class="err">' + esc(m.error) + "</p>" : "") + chips + acts + "</article>";
+}
+
+const INTRO = '<div class="intro"><h2>Say what changed</h2><p>Speak or type and the inventory updates. Tap an example to try it.</p><ul>'
+  + ["We're out of milk and low on olive oil.", "Add leftover pad thai and a rotisserie chicken.", "Suggest a few dinners from what we have."].map((t) => '<li><button type="button" data-act="example">' + esc(t) + "</button></li>").join("") + "</ul></div>";
+
+function nearBottom(){ return feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 140; }
+function paintFeed(){ feedEl.innerHTML = S.feed.length ? S.feed.map(msgHTML).join("") : INTRO; feedEl.scrollTop = feedEl.scrollHeight; }
+function paintMsg(m){
+  const el = feedEl.querySelector('[data-id="' + m.id + '"]');
+  if (!el) { paintFeed(); return; }
+  const stick = nearBottom();
+  el.outerHTML = msgHTML(m);
+  if (stick) feedEl.scrollTop = feedEl.scrollHeight;
+}
+function addMsg(m){
+  m.id = ++S.seq; S.feed.push(m);
+  if (S.feed.length > 80) S.feed.splice(0, S.feed.length - 80);
+  paintFeed();
+  return m;
+}
+
+function paintStatus(){
+  const el = $("status"), m = S.feed[S.feed.length - 1];
+  const on = S.busy && !S.bulk;
+  el.hidden = !on;
+  if (on) el.textContent = ((m && m.status) || "Claude is working") + "…";
+}
+
+function paintComposer(){
+  const off = S.claudeOff;
+  $("off-note").hidden = !off;
+  $("form").hidden = off;
+  $("quick").hidden = off || S.bulk;
+  $("btn-mic").hidden = !dict || S.micGone || off;
+  $("btn-photo").hidden = !S.canImages || off;
+  const live = S.mic === "listening" || S.mic === "starting";
+  $("btn-mic").dataset.on = String(live);
+  $("btn-mic").setAttribute("aria-label", live ? "Stop listening" : "Speak");
+  $("ico-send").toggleAttribute("hidden", S.busy);
+  $("ico-stop").toggleAttribute("hidden", !S.busy);
+  $("btn-send").setAttribute("aria-label", S.busy ? "Stop" : "Send");
+  $("q-order").disabled = S.busy; $("q-dinner").disabled = S.busy;
+  say.placeholder = S.bulk ? "Name what you see" : live ? "Listening" : "What changed?";
+}
+
+function paintBulk(){
+  const el = $("bulk");
+  const kb = !hasMic(), focused = document.activeElement === say;
+  el.hidden = !S.bulk;
+  say.classList.toggle("nudge", S.bulk && kb && !focused);
+  $("btn-mic").classList.toggle("nudge", S.bulk && !!S.asking);
+  if (!S.bulk) return;
+  const live = S.mic === "listening" || S.mic === "starting";
+  $("bulk-state").textContent = kb ? (focused ? "Ready" : "Tap the box")
+    : S.asking === "question" ? "Tap the mic to answer"
+    : S.asking === "error" ? "Paused. Tap the mic to try again"
+    : live ? "Listening" : S.micPaused ? "Mic paused. Tap the mic to keep going" : "Starting";
+  $("bulk-count").textContent = S.bulkCount + " added";
+  const heardNow = (S.bulkBuf + " " + S.partial).trim();
+  const hint = !kb ? "Walk the kitchen and name what you see."
+    : focused ? "Tap the microphone key on your keyboard and name what you see, or type. Items are added each time you pause."
+    : "Tap the box below to open your keyboard, then tap its microphone key. On this device, voice only works through the keyboard.";
+  const liveText = heardNow || (S.busy ? "Adding…" : S.asking ? "" : hint);
+  $("bulk-live").hidden = !liveText;
+  $("bulk-live").textContent = liveText;
+  const r = $("bulk-reply");
+  r.hidden = !S.bulkReply;
+  r.textContent = S.bulkReply;
+}
+
+function paintAttach(){
+  const el = $("attach");
+  el.hidden = !S.attach.length;
+  el.innerHTML = S.attach.map((f, i) => '<button type="button" data-i="' + i + '" aria-label="Remove ' + esc(f.name || "photo") + '">' + esc((f.name || "photo").slice(0, 28)) + " ×</button>").join("");
+}
+
+function showToast(text){
+  const t = $("toast");
+  t.textContent = text; t.hidden = false;
+  clearTimeout(toastT);
+  toastT = setTimeout(() => { t.hidden = true; }, 7000);
+}
+
+function autosize(){ say.style.height = "auto"; say.style.height = Math.min(say.scrollHeight + 2, 120) + "px"; }
+
+function setView(v, push){
+  if (v !== "chat" && v !== "inventory") return;
+  S.view = v; app.dataset.view = v;
+  $("tab-inventory").toggleAttribute("aria-current", v === "inventory");
+  $("tab-chat").toggleAttribute("aria-current", v === "chat");
+  if (v === "inventory") $("tab-inventory").setAttribute("aria-current", "page"); else $("tab-chat").setAttribute("aria-current", "page");
+  if (v === "chat") { $("toast").hidden = true; feedEl.scrollTop = feedEl.scrollHeight; }
+  if (push && location.hash !== "#" + v) { try { location.hash = v; } catch (e) {} }
+}
+
+/* ---------- Events ---------- */
+
+function wire(){
+  window.addEventListener("hashchange", () => setView(location.hash.slice(1)));
+
+  document.querySelectorAll(".tally").forEach((b) => b.addEventListener("click", () => {
+    S.filter = S.filter === b.dataset.filter ? "all" : b.dataset.filter;
+    paintInventory();
+    if (isNarrow()) setView("inventory", true);
+  }));
+
+  $("find").addEventListener("input", (e) => { S.query = e.target.value; paintShelves(); paintFinder(); });
+  $("find").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("btn-add").hidden) { e.preventDefault(); $("btn-add").click(); } });
+  $("btn-add").addEventListener("click", () => {
+    const q = cleanName(S.query);
+    if (!q) return;
+    S.query = ""; $("find").value = "";
+    opSet([{name: q, state: "have"}], false, null).catch(() => {});
+  });
+
+  shelves.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    const act = b.dataset.act, row = b.closest(".row"), key = row && row.dataset.k, cur = key && S.items[key];
+    if (act === "bulk") { startBulk(); return; }
+    if (!isActive(cur)) return;
+    if (act === "set") {
+      const st = b.dataset.s;
+      if (st !== cur.state) opSet([{name: cur.name, state: st}], false, null).catch(() => {});
+    } else if (act === "edit") { S.editing = key; S.focusEdit = true; paintShelves(); }
+    else if (act === "cancel") { S.editing = null; paintShelves(); }
+    else if (act === "remove") { S.editing = null; opRemove([cur.name], null).catch(() => {}); }
+    else if (act === "save") {
+      const v = cleanName(($("edit-name") || {}).value);
+      S.editing = null;
+      if (v && v !== cur.name) opRename(cur.name, v, null).catch(() => {}); else paintShelves();
+    }
+  });
+  shelves.addEventListener("keydown", (e) => {
+    if (e.target.id !== "edit-name") return;
+    if (e.key === "Enter") { e.preventDefault(); const s = shelves.querySelector('[data-act="save"]'); if (s) s.click(); }
+    if (e.key === "Escape") { S.editing = null; e.target.blur(); paintShelves(); }
+  });
+  shelves.addEventListener("focusout", () => { setTimeout(() => { if (S.dirty) paintShelves(); }, 0); });
+
+  feedEl.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    if (b.dataset.act === "example") { say.value = b.textContent; autosize(); say.focus(); return; }
+    const m = S.feed.find((x) => String(x.id) === b.dataset.id);
+    if (!m) return;
+    if (b.dataset.act === "undo") undoTurn(m);
+    if (b.dataset.act === "more") { m.open = true; paintMsg(m); }
+  });
+
+  $("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (S.busy && !S.bulk) { if (S.ctl) S.ctl.abort(); return; }
+    if (S.busy && S.bulk && !say.value.trim()) { if (S.ctl) S.ctl.abort(); return; }
+    if (S.bulk && !hasMic() && !S.attach.length) { kbFlush(true); return; }
+    submitText("typed");
+  });
+  say.addEventListener("input", () => {
+    autosize();
+    if (S.bulk && !hasMic()) { clearTimeout(kbT); kbT = setTimeout(() => { if (S.bulk && !hasMic()) kbFlush(false); }, 2200); }
+  });
+  say.addEventListener("focus", paintBulk);
+  say.addEventListener("blur", () => {
+    // Repaint after the tap that caused the blur has landed, so the bar can't shift under a finger.
+    setTimeout(() => {
+      paintBulk();
+      if (S.bulk && !hasMic() && document.activeElement !== say) kbFlush(true);
+    }, 400);
+  });
+  say.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("form").requestSubmit(); } });
+
+  $("btn-mic").addEventListener("click", () => {
+    if (!dict) return;
+    if (dict.active()) {
+      if (S.bulk) { S.micPaused = true; dict.stop().catch(() => {}); paintBulk(); }
+      else finishSingle();
+    } else startMic(S.bulk ? "bulk" : "single");
+  });
+
+  $("q-order").addEventListener("click", () => { if (!S.busy) { S.receiptMode = true; photo.click(); } });
+  $("q-dinner").addEventListener("click", () => { if (!S.busy) { if (isNarrow()) setView("chat", true); runTurn({text: "Suggest a few dinner recipes.", source: "typed"}); } });
+  $("q-bulk").addEventListener("click", startBulk);
+  $("bulk-done").addEventListener("click", endBulk);
+
+  $("btn-photo").addEventListener("click", () => photo.click());
+  photo.addEventListener("change", () => {
+    S.attach = S.attach.concat(Array.from(photo.files || [])).slice(0, Math.max(1, S.maxImages));
+    photo.value = "";
+    paintAttach();
+    if (S.receiptMode) {
+      S.receiptMode = false;
+      if (S.attach.length && !S.busy) {
+        if (isNarrow()) setView("chat", true);
+        say.value = "This is our grocery receipt. Add what was delivered.";
+        submitText("typed");
+        return;
+      }
+    }
+    say.focus();
+  });
+  $("attach").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (b) { S.attach.splice(Number(b.dataset.i), 1); paintAttach(); } });
+
+  $("toast").addEventListener("click", () => setView("chat", true));
+  $("banner").addEventListener("click", (e) => { if (e.target.id === "retry-save" && S.saveFail) { const p = S.saveFail.patch; S.saveFail = null; paintBanner(); commit(p).catch(() => {}); } });
+
+  const sheet = $("sheet");
+  $("btn-settings").addEventListener("click", () => { $("notes").value = S.notes; $("notes-msg").textContent = ""; sheet.hidden = false; $("sheet-close").focus(); });
+  $("sheet-close").addEventListener("click", () => { sheet.hidden = true; $("btn-settings").focus(); });
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) sheet.hidden = true; });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!sheet.hidden) sheet.hidden = true;
+    else if (S.speaking) stopVoice();
+  });
+  $("btn-hush").addEventListener("click", stopVoice);
+  $("notes-save").addEventListener("click", async () => {
+    const msg = $("notes-msg");
+    try { await saveNotes($("notes").value); msg.textContent = db ? "Saved" : "Kept for this visit only"; }
+    catch (e) { msg.textContent = "Couldn't save. Try again."; }
+  });
+  ["click", "keydown", "touchend"].forEach((t) => document.addEventListener(t, armSound, true));
+  $("sound").addEventListener("change", (e) => {
+    S.sound = e.target.checked;
+    try { localStorage.setItem("ks.sound", S.sound ? "1" : "0"); } catch (err) {}
+    if (S.sound) { armSound(); setTimeout(() => chime(1), 150); }
+  });
+  $("speak").addEventListener("change", (e) => {
+    S.speak = e.target.checked;
+    try { localStorage.setItem("ks.speak", S.speak ? "1" : "0"); } catch (err) {}
+    if (!S.speak) stopVoice();
+  });
+}
+
+/* ---------- Standalone version: storage, Claude, voice and wake word ----------
+   Kitchen Stock was built to run inside Claude, which supplies a database, Claude itself,
+   dictation and speech. This page runs on its own (GitHub Pages), so these adapters provide
+   the same interfaces: a Google Sheet (through Apps Script) for storage, the Claude API with
+   the person's key, the browser's speech recognition and voices, and an on-device wake word. */
+
+const CFG_KEY = "ks.cfg";
+const CFG = Object.assign(
+  {key: "", sheet: "", wake: true, thresh: 0.5, quick: "claude-haiku-5-5", main: "claude-sonnet-5-5"},
+  (() => { try { return JSON.parse(localStorage.getItem(CFG_KEY) || "{}"); } catch (e) { return {}; } })()
+);
+function saveCfg(){ try { localStorage.setItem(CFG_KEY, JSON.stringify(CFG)); } catch (e) {} }
+const errCode = (code, extra) => Object.assign({code}, extra || {});
+try { if (localStorage.getItem("ks.speak") == null) localStorage.setItem("ks.speak", "1"); } catch (e) {}
+
+/* --- Storage: a local copy on this device, synced with the Google Sheet --- */
+const store = (() => {
+  const LS = "ks.store", QS = "ks.queue";
+  let docs = {inventory: null, notes: null};
+  try { docs = Object.assign(docs, JSON.parse(localStorage.getItem(LS) || "{}")); } catch (e) {}
+  let queue = [];
+  try { queue = JSON.parse(localStorage.getItem(QS) || "[]"); } catch (e) { queue = []; }
+  const subs = {};
+  let synced = false, pulling = null, pushing = null;
+  const persist = () => { try { localStorage.setItem(LS, JSON.stringify(docs)); localStorage.setItem(QS, JSON.stringify(queue)); } catch (e) {} };
+  const copy = (o) => JSON.parse(JSON.stringify(o));
+  const snap = (name) => { const d = docs[name]; return {exists: !!d, data: () => (d ? copy(d) : undefined), metadata: {fromCache: !synced && !!CFG.sheet}}; };
+  const emit = (name) => (subs[name] || []).forEach((cb) => { try { cb(snap(name)); } catch (e) {} });
+  const pendingItems = () => { const p = {}; for (const q of queue) if (q.op === "patch") Object.assign(p, q.items); return p; };
+  const pendingNotes = () => { let t = null; for (const q of queue) if (q.op === "notes") t = q.text; return t; };
+
+  function pull(){
+    if (!CFG.sheet) {
+      S.localOnly = true; S.syncErr = false;
+      if (!synced) { synced = true; emit("inventory"); emit("notes"); }
+      paintBanner();
+      return Promise.resolve();
+    }
+    if (pulling) return pulling;
+    pulling = (async () => {
+      try {
+        const res = await fetch(CFG.sheet, {cache: "no-store", redirect: "follow"});
+        const data = await res.json();
+        if (!data || typeof data.items !== "object") throw new Error("bad response");
+        docs.inventory = {v: 1, items: Object.assign({}, data.items, pendingItems())};
+        const pn = pendingNotes();
+        docs.notes = {text: pn != null ? pn : String(data.notes || ""), upd: Date.now()};
+        synced = true; S.syncErr = false; S.localOnly = false;
+        persist(); emit("inventory"); emit("notes");
+      } catch (e) {
+        S.syncErr = true; S.localOnly = false;
+        if (!synced) { synced = true; emit("inventory"); emit("notes"); }
+      } finally { pulling = null; paintBanner(); }
+    })();
+    return pulling;
   }
 
-  async load() {
+  function push(){
+    if (!CFG.sheet || !queue.length) return Promise.resolve();
+    if (pushing) return pushing;
+    pushing = (async () => {
+      try {
+        while (queue.length) {
+          const res = await fetch(CFG.sheet, {method: "POST", redirect: "follow", headers: {"content-type": "text/plain;charset=utf-8"}, body: JSON.stringify(queue[0])});
+          const r = await res.json();
+          if (!r || !r.ok) throw new Error((r && r.error) || "rejected");
+          queue.shift(); persist();
+        }
+        S.syncErr = false;
+      } catch (e) { S.syncErr = true; }
+      finally { pushing = null; paintBanner(); }
+    })();
+    return pushing;
+  }
+
+  function enqueue(q){
+    if (CFG.sheet) { queue.push(q); persist(); push(); }
+    else persist();
+  }
+
+  function doc(path){
+    const name = String(path).split("/")[1];
+    return {
+      onSnapshot(cb){ (subs[name] = subs[name] || []).push(cb); setTimeout(() => cb(snap(name)), 0); return () => {}; },
+      async get(){ return snap(name); },
+      async set(data){
+        if (name === "inventory") { docs.inventory = copy(data); enqueue({op: "patch", items: data.items || {}}); }
+        else if (name === "notes") { docs.notes = {text: String(data.text || ""), upd: Date.now()}; enqueue({op: "notes", text: docs.notes.text}); }
+        else docs[name] = copy(data);
+        persist(); emit(name);
+      },
+      async update(data){
+        if (name !== "inventory") return this.set(data);
+        if (!docs.inventory) docs.inventory = {v: 1, items: {}};
+        Object.assign(docs.inventory.items, data.items || {});
+        enqueue({op: "patch", items: data.items || {}});
+        persist(); emit("inventory");
+      }
+    };
+  }
+
+  setInterval(() => { if (document.visibilityState === "visible") { pull(); push(); } }, 30000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { pull(); push(); } });
+  window.addEventListener("online", () => { pull(); push(); });
+  return {doc, pull, push, reconnect(){ synced = false; queue = queue.filter(() => !!CFG.sheet); persist(); return pull().then(push); }};
+})();
+const dbImpl = {doc: store.doc};
+
+/* --- Claude, through the API with the person's key --- */
+const modelFor = (tier) => (tier === "quick" ? (CFG.quick || "claude-haiku-5-5") : (CFG.main || "claude-sonnet-5-5"));
+
+async function imageBlock(file){
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const sc = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.naturalWidth * sc)); c.height = Math.max(1, Math.round(img.naturalHeight * sc));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return {type: "image", source: {type: "base64", media_type: "image/jpeg", data: c.toDataURL("image/jpeg", 0.85).split(",")[1]}};
+  } catch (e) { throw errCode("image_rejected"); }
+  finally { URL.revokeObjectURL(url); }
+}
+
+async function callClaude(body, signal){
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", signal,
+      headers: {"content-type": "application/json", "x-api-key": CFG.key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true"},
+      body: JSON.stringify(body)
+    });
+  } catch (e) {
+    if (e && e.name === "AbortError") throw errCode("cancelled");
+    throw errCode("upstream_error");
+  }
+  if (!res.ok) {
+    let msg = "";
+    try { msg = ((await res.json()).error || {}).message || ""; } catch (e) {}
+    if (res.status === 401 || res.status === 403) throw errCode("bad_key");
+    if (/credit|balance|billing/i.test(msg)) throw errCode("no_credit");
+    if (res.status === 429 || res.status === 529) throw errCode("rate_limited");
+    if (res.status === 413 || /too long|too large|maximum context/i.test(msg)) throw errCode("prompt_too_large");
+    if (res.status === 400 && /image/i.test(msg)) throw errCode("image_rejected");
+    throw errCode("upstream_error", {detail: msg});
+  }
+  return res.json();
+}
+
+async function sampleImpl(messages, opts){
+  opts = opts || {};
+  if (!CFG.key) throw errCode("no_key");
+  const system = (messages[0] && messages[0].content) || "";
+  const conv = [];
+  for (const m of messages.slice(1)) {
+    const last = conv[conv.length - 1];
+    if (last && last.role === m.role) last.content[0].text += "\n\n" + m.content;
+    else conv.push({role: m.role, content: [{type: "text", text: String(m.content)}]});
+  }
+  while (conv.length && conv[0].role !== "user") conv.shift();
+  if (!conv.length) throw errCode("empty_completion");
+  if (opts.images && opts.images.length) {
+    const blocks = [];
+    for (const f of opts.images) blocks.push(await imageBlock(f));
+    conv[conv.length - 1].content = blocks.concat(conv[conv.length - 1].content);
+  }
+  const defs = opts.tools || [];
+  const tools = defs.map((t) => ({name: t.name, description: t.description, input_schema: t.inputSchema || {type: "object", properties: {}}}));
+  let text = "", truncated = false, usedTools = false;
+  for (let round = 0; round < 6; round++) {
+    const body = {model: modelFor(opts.modelTier), max_tokens: 2048, system, messages: conv};
+    if (tools.length) body.tools = tools;
+    const data = await callClaude(body, opts.signal);
+    const blocks = data.content || [];
+    const said = blocks.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+    if (said) { text = text ? text + "\n\n" + said : said; if (opts.onText) opts.onText({text}); }
+    if (data.stop_reason === "max_tokens") truncated = true;
+    const uses = blocks.filter((b) => b.type === "tool_use");
+    if (data.stop_reason !== "tool_use" || !uses.length) break;
+    usedTools = true;
+    conv.push({role: "assistant", content: blocks});
+    const results = [];
+    for (const u of uses) {
+      const t = defs.find((x) => x.name === u.name);
+      let out, isErr = false;
+      try { out = t ? await t.execute(u.input || {}, {signal: opts.signal}) : {error: "Unknown tool " + u.name}; }
+      catch (e) { out = {error: (e && e.message) || String(e)}; isErr = true; }
+      results.push({type: "tool_result", tool_use_id: u.id, content: JSON.stringify(out == null ? {} : out), is_error: isErr});
+    }
+    conv.push({role: "user", content: results});
+    if (opts.signal && opts.signal.aborted) throw errCode("cancelled");
+  }
+  if (!text && !usedTools) throw errCode("empty_completion");
+  return {text, truncated};
+}
+sampleImpl.limits = () => ({tools: {maxCount: 8}, images: {maxCount: 4, mediaTypes: ["image/*"]}, modelTiers: ["quick", "default", "complex"]});
+
+/* --- Speech to text: the browser's recognizer (Chrome on Android) --- */
+const SRClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+const dictImpl = SRClass ? (() => {
+  const h = {partial: [], final: [], state: []};
+  let rec = null, live = false, want = false, cont = false;
+  const fire = (k, v) => h[k].forEach((f) => { try { f(v); } catch (e) {} });
+  function make(){
+    const r = new SRClass();
+    r.lang = "en-US"; r.interimResults = true; r.continuous = cont; r.maxAlternatives = 1;
+    r.onstart = () => fire("state", {state: "listening"});
+    r.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) { if (t.trim()) fire("final", {text: " " + t.trim()}); }
+        else interim += t;
+      }
+      fire("partial", {text: interim.trim()});
+    };
+    r.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") { want = false; r._reason = "not_granted"; }
+      else if (e.error === "audio-capture") { want = false; r._reason = "unavailable"; }
+    };
+    r.onend = () => {
+      if (rec === r) rec = null;
+      if (want && cont && !r._stopped) {
+        try { rec = make(); rec.start(); return; } catch (e) { rec = null; }
+      }
+      live = false; want = false;
+      fire("partial", {text: ""});
+      fire("state", {state: "idle", reason: r._reason || (r._stopped ? "stopped" : "ended")});
+      if (r._done) r._done();
+      wake.resumeSoon();
+    };
+    return r;
+  }
+  return {
+    start(){
+      return (async () => {
+        cont = S.voice === "bulk"; want = true; live = true;
+        fire("state", {state: "starting"});
+        await wake.pause();
+        rec = make();
+        try { rec.start(); }
+        catch (e) { rec = null; live = false; want = false; fire("state", {state: "idle", reason: "unavailable"}); wake.resumeSoon(); throw errCode("upstream_error"); }
+      })();
+    },
+    stop(){
+      want = false;
+      const r = rec;
+      if (!r) return Promise.resolve();
+      return new Promise((res) => {
+        r._done = res; r._stopped = true;
+        try { r.stop(); } catch (e) { res(); }
+        setTimeout(res, 2000);
+      });
+    },
+    active(){ return live; },
+    onPartial(f){ h.partial.push(f); }, onFinal(f){ h.final.push(f); }, onState(f){ h.state.push(f); }
+  };
+})() : null;
+
+/* --- Speech out: the device's voices --- */
+const ttsImpl = ("speechSynthesis" in window) ? (() => {
+  const hs = [];
+  const fire = (s) => hs.forEach((f) => { try { f({state: s}); } catch (e) {} });
+  return {
+    speak(text){
+      return new Promise((res) => {
+        speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = "en-US"; u.rate = 1.03;
+        u.onstart = () => fire("speaking");
+        u.onend = u.onerror = () => { fire("idle"); res(); };
+        speechSynthesis.speak(u);
+      });
+    },
+    stop(){ speechSynthesis.cancel(); fire("idle"); },
+    onState(f){ hs.push(f); }
+  };
+})() : null;
+
+/* --- Wake word: openWakeWord running on this device ---
+   16 kHz audio in 80 ms chunks -> melspectrogram.onnx -> embedding_model.onnx -> wake model score.
+   Mirrors openWakeWord's Python streaming pipeline. No audio leaves the device while it waits. */
+class WakeWord {
+  constructor(o){ Object.assign(this, o); this.running = false; this.busy = false; this.queue = []; this.lastWake = 0; }
+  async load(){
     ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
-    const opts = { executionProviders: ["wasm"] };
-    [this.mel, this.emb, this.wake] = await Promise.all([
-      ort.InferenceSession.create(this.modelBase + "melspectrogram.onnx", opts),
-      ort.InferenceSession.create(this.modelBase + "embedding_model.onnx", opts),
-      ort.InferenceSession.create(this.modelBase + this.wakeFile, opts),
+    const o = {executionProviders: ["wasm"]};
+    [this.mel, this.emb, this.ww] = await Promise.all([
+      ort.InferenceSession.create(this.base + "melspectrogram.onnx", o),
+      ort.InferenceSession.create(this.base + "embedding_model.onnx", o),
+      ort.InferenceSession.create(this.base + this.file, o)
     ]);
   }
-
-  resetBuffers() {
-    this.raw = new Float32Array(0);
-    this.pending = new Float32Array(0);
-    this.melFrames = Array.from({ length: 76 }, () => new Float32Array(32).fill(1));
-    this.features = [];
-    this.chunks = 0;
+  reset(){
+    this.raw = new Float32Array(0); this.pending = new Float32Array(0);
+    this.melFrames = Array.from({length: 76}, () => new Float32Array(32).fill(1));
+    this.features = []; this.chunks = 0;
   }
-
-  async start() {
-    this.resetBuffers();
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
-    this.ctx = new AudioContext({ sampleRate: 16000 });
-    const workletSrc = `
-      class Tap extends AudioWorkletProcessor {
-        process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; }
-      }
-      registerProcessor("tap", Tap);`;
-    const url = URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" }));
-    await this.ctx.audioWorklet.addModule(url);
-    const src = this.ctx.createMediaStreamSource(this.stream);
+  async start(){
+    this.reset();
+    this.stream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true}});
+    this.ctx = new AudioContext({sampleRate: 16000});
+    const src = "class Tap extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('tap',Tap);";
+    await this.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([src], {type: "application/javascript"})));
     this.node = new AudioWorkletNode(this.ctx, "tap");
-    this.node.port.onmessage = (e) => this.onSamples(e.data);
-    src.connect(this.node);
-    // Worklet must reach the graph's output to keep running; route through a muted gain.
+    this.node.port.onmessage = (e) => this.samples(e.data);
+    this.ctx.createMediaStreamSource(this.stream).connect(this.node);
     const mute = this.ctx.createGain(); mute.gain.value = 0;
     this.node.connect(mute); mute.connect(this.ctx.destination);
     this.running = true;
   }
-
-  async stop() {
-    this.running = false;
-    try { this.node && this.node.disconnect(); } catch {}
-    try { this.stream && this.stream.getTracks().forEach((t) => t.stop()); } catch {}
-    try { this.ctx && await this.ctx.close(); } catch {}
-    this.queue = [];
+  async stop(){
+    this.running = false; this.queue = [];
+    try { this.node && this.node.disconnect(); } catch (e) {}
+    try { this.stream && this.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    try { this.ctx && await this.ctx.close(); } catch (e) {}
   }
-
-  onSamples(f32) {
+  samples(f){
     if (!this.running) return;
-    // Scale to int16 range like openWakeWord expects.
-    const s = new Float32Array(f32.length);
-    let peak = 0;
-    for (let i = 0; i < f32.length; i++) { s[i] = f32[i] * 32767; const a = Math.abs(f32[i]); if (a > peak) peak = a; }
-    this.onLevel && this.onLevel(peak);
-    const merged = new Float32Array(this.pending.length + s.length);
-    merged.set(this.pending); merged.set(s, this.pending.length);
+    const s = new Float32Array(f.length);
+    for (let i = 0; i < f.length; i++) s[i] = f[i] * 32767;
+    const m = new Float32Array(this.pending.length + s.length);
+    m.set(this.pending); m.set(s, this.pending.length);
     let off = 0;
-    while (merged.length - off >= 1280) { this.queue.push(merged.slice(off, off + 1280)); off += 1280; }
-    this.pending = merged.slice(off);
-    if (this.queue.length > 6) this.queue.splice(0, this.queue.length - 6); // drop if we fall behind
+    while (m.length - off >= 1280) { this.queue.push(m.slice(off, off + 1280)); off += 1280; }
+    this.pending = m.slice(off);
+    if (this.queue.length > 6) this.queue.splice(0, this.queue.length - 6);
     this.pump();
   }
-
-  async pump() {
+  async pump(){
     if (this.busy) return;
     this.busy = true;
-    try {
-      while (this.running && this.queue.length) await this.processChunk(this.queue.shift());
-    } catch (err) {
-      console.error("wake word error", err);
-    } finally { this.busy = false; }
+    try { while (this.running && this.queue.length) await this.chunk(this.queue.shift()); }
+    catch (e) { console.error("wake word", e); }
+    finally { this.busy = false; }
   }
-
-  async processChunk(chunk) {
-    // Keep a rolling raw buffer; melspectrogram runs on the newest 1280 + 480 samples.
-    const raw = new Float32Array(this.raw.length + chunk.length);
-    raw.set(this.raw); raw.set(chunk, this.raw.length);
+  async chunk(c){
+    const raw = new Float32Array(this.raw.length + c.length);
+    raw.set(this.raw); raw.set(c, this.raw.length);
     this.raw = raw.length > 16000 ? raw.slice(raw.length - 16000) : raw;
-    const n = Math.min(this.raw.length, 1280 + 480);
-    const audio = this.raw.slice(this.raw.length - n);
-
-    const melOut = await this.mel.run({ [this.mel.inputNames[0]]: new ort.Tensor("float32", audio, [1, n]) });
-    const m = melOut[this.mel.outputNames[0]].data;
-    for (let i = 0; i + 32 <= m.length; i += 32) {
-      const frame = new Float32Array(32);
-      for (let j = 0; j < 32; j++) frame[j] = m[i + j] / 10 + 2;
-      this.melFrames.push(frame);
+    const n = Math.min(this.raw.length, 1760);
+    const mo = await this.mel.run({[this.mel.inputNames[0]]: new ort.Tensor("float32", this.raw.slice(this.raw.length - n), [1, n])});
+    const md = mo[this.mel.outputNames[0]].data;
+    for (let i = 0; i + 32 <= md.length; i += 32) {
+      const fr = new Float32Array(32);
+      for (let j = 0; j < 32; j++) fr[j] = md[i + j] / 10 + 2;
+      this.melFrames.push(fr);
     }
     if (this.melFrames.length > 300) this.melFrames.splice(0, this.melFrames.length - 300);
-
     const win = new Float32Array(76 * 32);
-    this.melFrames.slice(-76).forEach((f, i) => win.set(f, i * 32));
-    const embOut = await this.emb.run({ [this.emb.inputNames[0]]: new ort.Tensor("float32", win, [1, 76, 32, 1]) });
-    this.features.push(Float32Array.from(embOut[this.emb.outputNames[0]].data));
+    this.melFrames.slice(-76).forEach((fr, i) => win.set(fr, i * 32));
+    const eo = await this.emb.run({[this.emb.inputNames[0]]: new ort.Tensor("float32", win, [1, 76, 32, 1])});
+    this.features.push(Float32Array.from(eo[this.emb.outputNames[0]].data));
     if (this.features.length > 16) this.features.shift();
-
-    this.chunks++;
-    if (this.features.length < 16 || this.chunks < 20) return; // warm-up ~1.6 s
-
-    const feat = new Float32Array(16 * 96);
-    this.features.forEach((f, i) => feat.set(f, i * 96));
-    const wakeOut = await this.wake.run({ [this.wake.inputNames[0]]: new ort.Tensor("float32", feat, [1, 16, 96]) });
-    const score = wakeOut[this.wake.outputNames[0]].data[0];
-    if (score >= this.threshold && Date.now() - this.lastWake > 2500) {
-      this.lastWake = Date.now();
-      this.onWake && this.onWake(score);
-    }
+    if (++this.chunks < 20 || this.features.length < 16) return;
+    const ft = new Float32Array(16 * 96);
+    this.features.forEach((v, i) => ft.set(v, i * 96));
+    const wo = await this.ww.run({[this.ww.inputNames[0]]: new ort.Tensor("float32", ft, [1, 16, 96])});
+    const score = wo[this.ww.outputNames[0]].data[0];
+    if (score >= this.threshold && Date.now() - this.lastWake > 2500) { this.lastWake = Date.now(); this.onWake(score); }
   }
 }
 
-/* ---------------- Speech to text (Chrome's recognizer) ---------------- */
-function listenOnce({ timeoutMs = 9000 } = {}) {
-  return new Promise((resolve) => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return resolve({ error: "Speech recognition isn't available in this browser." });
-    const rec = new SR();
-    rec.lang = "en-US"; rec.interimResults = true; rec.maxAlternatives = 1; rec.continuous = false;
-    let finalText = "", done = false;
-    const finish = (r) => { if (!done) { done = true; clearTimeout(t); try { rec.stop(); } catch {} resolve(r); } };
-    const t = setTimeout(() => finish({ text: finalText.trim() }), timeoutMs);
-    rec.onresult = (e) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) finalText += e.results[i][0].transcript + " ";
-        else interim += e.results[i][0].transcript;
-      }
-      $("heard").textContent = (finalText + interim).trim();
-    };
-    rec.onerror = (e) => finish({ text: finalText.trim(), error: e.error === "no-speech" ? null : e.error });
-    rec.onend = () => finish({ text: finalText.trim() });
-    try { rec.start(); } catch (err) { finish({ error: String(err) }); }
-  });
-}
-
-/* ---------------- Claude ---------------- */
-const SYSTEM = `You manage a family's kitchen inventory on a tablet mounted on their fridge.
-Every item has exactly one status: "have", "low" or "out". There are no quantities.
-You receive the current inventory and a speech-to-text transcript of what someone said in the kitchen. Transcripts can contain recognition errors; infer the most likely meaning.
-Always call the respond tool exactly once:
-- updates: every status change implied by the message. Reuse an existing item's exact name when it is the same food (e.g. "blueberry" -> "blueberries"). New items get short, lowercase, plural-where-natural names ("blueberries", "eggs", "greek yogurt").
-  "we're out of / finished / used the last" -> out; "running low / almost out" -> low; "bought / got / restocked / we have" -> have; "stop tracking / remove" -> remove.
-- reply: a short spoken confirmation or answer, under 15 words, friendly, no emoji. If they asked a question (e.g. "what are we out of?"), answer it from the inventory and make no updates.
-If the message isn't about food or the inventory, make no updates and say briefly what you can help with.`;
-
-const TOOL = {
-  name: "respond",
-  description: "Apply inventory changes and give the spoken reply.",
-  input_schema: {
-    type: "object",
-    properties: {
-      updates: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            item: { type: "string" },
-            status: { type: "string", enum: ["have", "low", "out", "remove"] },
-          },
-          required: ["item", "status"],
-        },
-      },
-      reply: { type: "string" },
-    },
-    required: ["updates", "reply"],
-  },
-};
-
-async function askClaude(text) {
-  if (!settings.key) throw new Error("Add your Claude API key in Settings (⚙︎).");
-  const current = Object.entries(inventory).map(([n, v]) => `${n}: ${v.status}`).join("\n") || "(empty)";
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": settings.key,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: settings.model || DEFAULTS.model,
-      max_tokens: 500,
-      system: SYSTEM,
-      tools: [TOOL],
-      tool_choice: { type: "tool", name: "respond" },
-      messages: [{ role: "user", content: `Current inventory:\n${current}\n\nThey said: "${text}"` }],
-    }),
-  });
-  if (!res.ok) {
-    let msg = `Claude API error ${res.status}`;
-    try { const j = await res.json(); if (j.error && j.error.message) msg += `: ${j.error.message}`; } catch {}
-    throw new Error(msg);
+const wake = (() => {
+  let ww = null, loading = null, on = false, resumeT = null, lock = null, cctx = null;
+  const LABEL_ON = "Say “Hey Jarvis”";
+  function paint(state){
+    const b = $("wake");
+    if (!b) return;
+    b.hidden = !CFG.wake;
+    b.dataset.state = state;
+    b.textContent = {listening: LABEL_ON, start: "Tap to start “Hey Jarvis”", loading: "Starting “Hey Jarvis”…", paused: "Listening to you…", error: "Hey Jarvis: mic unavailable"}[state] || "";
   }
-  const data = await res.json();
-  const call = (data.content || []).find((b) => b.type === "tool_use");
-  return call ? call.input : { updates: [], reply: "Sorry, I didn't catch that." };
-}
-
-function applyUpdates(updates) {
-  const changed = [];
-  for (const u of updates || []) {
-    const name = String(u.item || "").trim().toLowerCase();
-    if (!name) continue;
-    if (u.status === "remove") { delete inventory[name]; continue; }
-    if (!STATUS_ORDER.includes(u.status)) continue;
-    inventory[name] = { status: u.status, updated: Date.now() };
-    changed.push(name);
+  function ding(){
+    try {
+      cctx = cctx || new AudioContext();
+      const t = cctx.currentTime;
+      [660, 990].forEach((f, i) => {
+        const o = cctx.createOscillator(), g = cctx.createGain();
+        o.frequency.value = f; o.connect(g); g.connect(cctx.destination);
+        g.gain.setValueAtTime(0.0001, t + i * 0.12);
+        g.gain.exponentialRampToValueAtTime(0.25, t + i * 0.12 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.2);
+        o.start(t + i * 0.12); o.stop(t + i * 0.12 + 0.22);
+      });
+    } catch (e) {}
   }
-  saveInventory();
-  render(changed);
-}
-
-/* ---------------- Google Sheet sync (optional) ---------------- */
-let pushTimer = null;
-function scheduleSheetPush() {
-  if (!settings.sheet) return;
-  clearTimeout(pushTimer);
-  pushTimer = setTimeout(pushSheet, 1500);
-}
-async function pushSheet() {
-  if (!settings.sheet) return;
-  try {
-    // text/plain avoids a CORS preflight, which Apps Script can't answer.
-    await fetch(settings.sheet, { method: "POST", headers: { "content-type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ items: inventory }) });
-  } catch (err) { console.warn("sheet push failed", err); }
-}
-async function pullSheet() {
-  if (!settings.sheet) return;
-  try {
-    const res = await fetch(settings.sheet);
-    const data = await res.json();
-    if (data && data.items && typeof data.items === "object") {
-      const next = {};
-      for (const [n, v] of Object.entries(data.items)) {
-        if (v && STATUS_ORDER.includes(v.status)) next[String(n).toLowerCase()] = { status: v.status, updated: Number(v.updated) || Date.now() };
-      }
-      inventory = next;
-      try { localStorage.setItem("fc.inventory", JSON.stringify(inventory)); } catch {}
-      render();
-    }
-  } catch (err) { console.warn("sheet pull failed", err); }
-}
-
-/* ---------------- Main flow ---------------- */
-let wake = null;
-let handling = false;
-
-async function handleUtterance(text) {
-  if (!text) { showExchange("", "I didn't hear anything."); return; }
-  setStatus("thinking", "Thinking…");
-  showExchange(text, "…");
-  try {
-    const { updates, reply } = await askClaude(text);
-    applyUpdates(updates);
-    showExchange(text, reply);
-    await speak(reply);
-  } catch (err) {
-    showExchange(text, err.message);
-    setStatus("error", "Error");
-    await speak("Sorry, something went wrong.");
+  async function keepAwake(){ try { if (!lock && navigator.wakeLock) { lock = await navigator.wakeLock.request("screen"); lock.addEventListener("release", () => { lock = null; }); } } catch (e) {} }
+  function heard(){
+    if (!dictImpl || S.busy || S.bulk || dictImpl.active() || S.claudeOff) return;
+    ding();
+    paint("paused");
+    if (S.speaking) stopVoice();
+    setTimeout(() => startMic("single"), 250);
   }
-}
-
-async function converse() {
-  if (handling) return;
-  handling = true;
-  try {
-    // Free the mic for the recognizer (Android allows only one capture at a time).
-    if (wake && wake.running) await wake.stop();
-    chime();
-    await new Promise((r) => setTimeout(r, 250));
-    setStatus("hearing", "Listening to you…");
-    $("heard").textContent = ""; $("reply").textContent = "";
-    const { text, error } = await listenOnce();
-    if (error && !text) { showExchange("", `Mic problem: ${error}`); }
-    else await handleUtterance(text);
-  } finally {
-    handling = false;
-    await resumeWake();
+  async function ensure(){
+    if (!CFG.wake || on || loading) return loading;
+    try { cctx = cctx || new AudioContext(); if (cctx.state === "suspended") cctx.resume(); } catch (e) {}
+    paint("loading");
+    loading = (async () => {
+      try {
+        if (!ww) {
+          ww = new WakeWord({base: "", file: "hey_jarvis_v0.1.onnx", threshold: Number(CFG.thresh) || 0.5, onWake: heard});
+          await ww.load();
+        }
+        if (!(dictImpl && dictImpl.active())) await ww.start();
+        on = true; keepAwake(); paint(ww.running ? "listening" : "paused");
+      } catch (e) {
+        console.error(e); paint("error");
+      } finally { loading = null; }
+    })();
+    return loading;
   }
-}
-
-async function resumeWake() {
-  if (!wake) { setStatus("", "Tap 🎤 to talk"); return; }
-  try {
-    await wake.start();
-    setStatus("listening", `Say “${wakeLabel()}”`);
-  } catch (err) {
-    setStatus("error", "Mic unavailable");
-    console.error(err);
+  async function pause(){ clearTimeout(resumeT); if (ww && ww.running) await ww.stop(); if (on) paint("paused"); }
+  function resumeSoon(){ clearTimeout(resumeT); resumeT = setTimeout(resume, 700); }
+  async function resume(){
+    if (!on || !CFG.wake || !ww || ww.running || S.bulk || (dictImpl && dictImpl.active())) { if (on && ww && ww.running) paint("listening"); return; }
+    try { await ww.start(); paint("listening"); keepAwake(); } catch (e) { paint("error"); }
   }
-}
+  async function disable(){ on = false; if (ww && ww.running) await ww.stop(); paint("start"); }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && on) { keepAwake(); resumeSoon(); } });
+  return {ensure, pause, resumeSoon, disable, paint, setThreshold(t){ if (ww) ww.threshold = t; }, get on(){ return on; }};
+})();
 
-let wakeLock = null;
-async function keepAwake() {
-  try { wakeLock = await navigator.wakeLock.request("screen"); } catch {}
-}
-document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState === "visible") {
-    keepAwake();
-    if (wake && !wake.running && !handling) resumeWake();
-    pullSheet();
-  }
-});
+const ADAPTERS = {db: dbImpl, sample: sampleImpl, mcp: null, dictation: dictImpl, tts: ttsImpl};
 
-async function boot() {
-  $("start-msg").textContent = "Loading wake word…";
-  keepAwake();
-  chimeCtx = new AudioContext(); // unlock audio on this tap
-  try {
-    wake = new WakeWord({
-      modelBase: "",
-      wakeFile: settings.wake || DEFAULTS.wake,
-      threshold: Number(settings.thresh) || DEFAULTS.thresh,
-      onWake: () => converse(),
-      onLevel: (p) => { $("level").firstElementChild.style.width = Math.min(100, p * 300) + "%"; },
-    });
-    await wake.load();
-    await wake.start();
-    setStatus("listening", `Say “${wakeLabel()}”`);
-  } catch (err) {
-    console.error(err);
-    wake = null;
-    setStatus("error", "Wake word off — tap 🎤");
-    showExchange("", `Couldn't start the wake word (${err.message || err}). Check that the .onnx files are uploaded next to index.html. Tap 🎤 to talk meanwhile.`);
-  }
-  $("start-overlay").hidden = true;
-}
-
-/* ---------------- Wire up ---------------- */
-$("start-btn").addEventListener("click", boot);
-$("talk").addEventListener("click", () => converse());
-$("type-send").addEventListener("click", () => {
-  const v = $("type-box").value.trim();
-  if (v) { $("type-box").value = ""; handleUtterance(v).then(() => { if (wake && wake.running) setStatus("listening", `Say “${wakeLabel()}”`); }); }
-});
-$("type-box").addEventListener("keydown", (e) => { if (e.key === "Enter") $("type-send").click(); });
-
-$("settings-btn").addEventListener("click", () => {
-  $("s-key").value = settings.key; $("s-model").value = settings.model; $("s-sheet").value = settings.sheet;
-  $("s-wake").value = settings.wake; $("s-thresh").value = settings.thresh;
-  $("settings").hidden = false;
-});
-$("s-cancel").addEventListener("click", () => { $("settings").hidden = true; });
-$("s-save").addEventListener("click", () => {
-  const wakeChanged = $("s-wake").value.trim() !== settings.wake;
-  settings = {
-    key: $("s-key").value.trim(),
-    model: $("s-model").value.trim() || DEFAULTS.model,
-    sheet: $("s-sheet").value.trim(),
-    wake: $("s-wake").value.trim() || DEFAULTS.wake,
-    thresh: Math.min(0.9, Math.max(0.1, Number($("s-thresh").value) || DEFAULTS.thresh)),
+function wireStandalone(){
+  const fill = () => {
+    $("cfg-key").value = CFG.key; $("cfg-sheet").value = CFG.sheet; $("cfg-wake").checked = !!CFG.wake;
+    $("cfg-msg").textContent = "";
   };
-  saveSettings();
-  if (wake) wake.threshold = settings.thresh;
-  $("settings").hidden = true;
-  pullSheet();
-  if (wakeChanged) location.reload();
-});
+  $("btn-settings").addEventListener("click", fill);
+  $("cfg-save").addEventListener("click", () => {
+    const sheetChanged = $("cfg-sheet").value.trim() !== CFG.sheet;
+    const wakeWas = !!CFG.wake;
+    CFG.key = $("cfg-key").value.trim();
+    CFG.sheet = $("cfg-sheet").value.trim();
+    CFG.wake = $("cfg-wake").checked;
+    saveCfg();
+    $("cfg-msg").textContent = "Saved";
+    if (sheetChanged) store.reconnect();
+    if (CFG.wake && !wakeWas) wake.ensure();
+    if (!CFG.wake && wakeWas) wake.disable().then(() => wake.paint("start"));
+    if (!CFG.wake) $("wake").hidden = true;
+  });
+  $("wake").addEventListener("click", () => { if (!wake.on) wake.ensure(); });
+  // The browser lets a page start the microphone and sound only after a tap, so the first tap anywhere starts listening.
+  const first = () => { if (CFG.wake && !wake.on) wake.ensure(); };
+  ["click", "touchend", "keydown"].forEach((t) => document.addEventListener(t, first, true));
+  wake.paint("start");
+  if (!CFG.wake) $("wake").hidden = true;
+  if (!CFG.key) setTimeout(() => showToast("Open Settings (top right) to add your Claude API key."), 600);
+  store.pull().then(() => store.push());
+}
 
-render();
-pullSheet();
-setInterval(pullSheet, 5 * 60 * 1000); // pick up changes made from chat
-if (!settings.key) $("start-msg").textContent = "First time? After starting, open ⚙︎ and add your Claude API key.";
+/* ---------- Start ---------- */
+
+function start(saved){
+  saved = (saved && typeof saved === "object") ? saved : {};
+  if (Array.isArray(saved.feed)) { S.feed = saved.feed.filter((m) => m && m.id).map((m) => Object.assign({}, m, {thinking: false})); S.seq = S.feed.reduce((n, m) => Math.max(n, m.id), 0); }
+  if (Array.isArray(saved.history)) S.history = saved.history.filter((t) => t && typeof t.content === "string" && t.content);
+  if (typeof saved.draft === "string") say.value = saved.draft;
+  try { S.speak = localStorage.getItem("ks.speak") === "1"; } catch (e) {}
+  $("speak").checked = S.speak;
+  try { S.sound = localStorage.getItem("ks.sound") !== "0"; } catch (e) {}
+  $("sound").checked = S.sound;
+
+  wire();
+  wireStandalone();
+  const h = location.hash.slice(1);
+  setView(h === "chat" || h === "inventory" ? h : (saved.view === "chat" ? "chat" : "inventory"));
+  paintInventory(); paintFeed(); paintComposer(); paintBanner(); autosize();
+
+  use("db").then((v) => {
+    db = v;
+    if (db) subscribe();
+    else { S.dbOff = true; S.loaded = true; paintInventory(); paintBanner(); }
+  });
+  sampleReady = use("sample").then(async (v) => {
+    sample = v;
+    if (!sample) { S.claudeOff = true; paintComposer(); return; }
+    limits = await Promise.resolve().then(() => sample.limits()).catch(() => null);
+    S.toolsOk = !!(limits && limits.tools && (limits.tools.maxCount == null || limits.tools.maxCount >= 5));
+    if (limits && limits.images) {
+      S.canImages = true; S.maxImages = limits.images.maxCount || 1;
+      if (Array.isArray(limits.images.mediaTypes) && limits.images.mediaTypes.length) photo.accept = limits.images.mediaTypes.join(",");
+    }
+    paintComposer();
+  });
+  use("mcp").then((v) => { mcp = v; });
+  use("dictation").then((v) => { dict = v; if (dict) initDictation(); paintComposer(); paintBulk(); });
+  use("tts").then((v) => {
+    tts = v; $("speak-field").hidden = !tts;
+    if (tts && typeof tts.onState === "function") {
+      try {
+        tts.onState((e) => {
+          const on = !!(e && e.state && e.state !== "idle");
+          if (on !== S.speaking) { S.speaking = on; paintVoice(); }
+        });
+      } catch (err) {}
+    }
+  });
+}
+
+let hot = null;
+try { hot = (window.claude && window.claude.hot) || null; } catch (e) { hot = null; }
+try {
+  if (hot && typeof hot.snapshot === "function") {
+    hot.snapshot(() => ({
+      view: S.view,
+      draft: say.value,
+      history: S.history.slice(-16),
+      feed: S.feed.slice(-30).map((m) => ({id: m.id, role: m.role, text: m.text, photos: m.photos || 0, chips: m.chips || [], note: m.note || "", error: m.error || "", undo: m.undo || null, undone: !!m.undone}))
+    }));
+  }
+} catch (e) {}
+if (hot && typeof hot.ready === "function") hot.ready(start);
+else start((hot && hot.data) || {});
+
+})();
 </script>
 </body>
 </html>
