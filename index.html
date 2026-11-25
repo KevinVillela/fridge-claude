@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="theme-color" content="#14161a">
+<title>Fridge Claude</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --line: #2c3038; --text: #eceef2; --muted: #9aa1ad;
+    --have: #3fb27f; --low: #e0a43a; --out: #e2574c; --accent: #d97757;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 18px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 22px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  #status { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    background: var(--panel); color: var(--muted); font-size: 15px; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  #status.listening #dot { background: var(--have); }
+  #status.hearing #dot, #status.thinking #dot { background: var(--accent); animation: pulse 1s infinite; }
+  #status.error #dot { background: var(--out); }
+  @keyframes pulse { 50% { opacity: .3; } }
+  #level { width: 60px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  #level > i { display: block; height: 100%; width: 0; background: var(--have); transition: width .08s; }
+  .spacer { flex: 1; }
+  button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 10px 16px; cursor: pointer; }
+  button:active { transform: scale(.97); }
+  #talk { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  #convo { padding: 12px 18px; min-height: 76px; border-bottom: 1px solid var(--line); }
+  #heard { color: var(--muted); font-size: 16px; min-height: 22px; }
+  #reply { font-size: 22px; font-weight: 550; min-height: 30px; }
+  main { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 14px 18px; overflow: hidden; }
+  section { background: var(--panel); border-radius: 16px; padding: 12px; display: flex; flex-direction: column; min-height: 0; }
+  section h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; display: flex; gap: 8px; align-items: center; }
+  section h2 .count { color: var(--muted); font-weight: 400; }
+  .list { overflow-y: auto; display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px;
+    background: #262a31; border: 1px solid var(--line); font-size: 17px; user-select: none; }
+  .chip .x { color: var(--muted); font-size: 15px; padding-left: 4px; }
+  .chip.flash { outline: 2px solid var(--accent); }
+  #sec-out h2 { color: var(--out); } #sec-low h2 { color: var(--low); } #sec-have h2 { color: var(--have); }
+  footer { display: flex; gap: 10px; padding: 0 18px 14px; }
+  footer input { flex: 1; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 10px 14px; }
+  .overlay { position: fixed; inset: 0; background: rgba(10,11,13,.92); display: flex; align-items: center; justify-content: center; z-index: 10; }
+  .overlay[hidden] { display: none; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 24px; width: min(560px, 92vw); max-height: 90vh; overflow-y: auto; }
+  .card h3 { margin: 0 0 12px; font-size: 22px; }
+  .card label { display: block; margin: 14px 0 4px; color: var(--muted); font-size: 15px; }
+  .card input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .card .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+  .card p { color: var(--muted); font-size: 15px; margin: 6px 0; }
+  #start-btn { font-size: 24px; padding: 18px 30px; background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (orientation: portrait) { main { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kitchen</h1>
+  <div id="status"><span id="dot"></span><span id="status-text">Starting…</span><div id="level"><i></i></div></div>
+  <div class="spacer"></div>
+  <button id="talk" title="Talk without the wake word">🎤 Talk</button>
+  <button id="settings-btn" title="Settings">⚙︎</button>
+</header>
+
+<div id="convo">
+  <div id="heard"></div>
+  <div id="reply">Say the wake word, wait for the chime, then tell me what changed.</div>
+</div>
+
+<main>
+  <section id="sec-out"><h2>Out <span class="count"></span></h2><div class="list" data-status="out"></div></section>
+  <section id="sec-low"><h2>Low <span class="count"></span></h2><div class="list" data-status="low"></div></section>
+  <section id="sec-have"><h2>Have <span class="count"></span></h2><div class="list" data-status="have"></div></section>
+</main>
+
+<footer>
+  <input id="type-box" placeholder="Or type it: “out of blueberries, low on eggs”" autocomplete="off">
+  <button id="type-send">Send</button>
+</footer>
+
+<div class="overlay" id="start-overlay">
+  <div class="card" style="text-align:center">
+    <h3>Fridge Claude</h3>
+    <p>Tap to turn on the microphone and keep the screen awake.</p>
+    <p id="start-msg"></p>
+    <div class="row" style="justify-content:center"><button id="start-btn">Start listening</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="settings" hidden>
+  <div class="card">
+    <h3>Settings</h3>
+    <label>Claude API key</label>
+    <input id="s-key" type="password" placeholder="sk-ant-…">
+    <label>Claude model</label>
+    <input id="s-model" placeholder="claude-haiku-5-5">
+    <label>Google Sheet sync URL (Apps Script web app, optional)</label>
+    <input id="s-sheet" placeholder="https://script.google.com/macros/s/…/exec">
+    <label>Wake word model file (.onnx, next to index.html)</label>
+    <input id="s-wake" placeholder="hey_claude.onnx">
+    <label>Wake sensitivity threshold (0.1–0.9, lower = more sensitive)</label>
+    <input id="s-thresh" type="number" step="0.05" min="0.1" max="0.9">
+    <p>Settings are saved only on this tablet.</p>
+    <div class="row">
+      <button id="s-cancel">Cancel</button>
+      <button id="s-save" style="background:var(--accent);border-color:var(--accent);color:#fff">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------------- Settings & storage ---------------- */
+const DEFAULTS = { key: "", model: "claude-haiku-5-5", sheet: "", wake: "hey_jarvis_v0.1.onnx", thresh: 0.5 };
+function loadSettings() {
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("fc.settings") || "{}") }; }
+  catch { return { ...DEFAULTS }; }
+}
+let settings = loadSettings();
+function saveSettings() { try { localStorage.setItem("fc.settings", JSON.stringify(settings)); } catch {} }
+
+// inventory: { "blueberries": { status: "out", updated: 1732560000000 } }
+let inventory = {};
+try { inventory = JSON.parse(localStorage.getItem("fc.inventory") || "{}"); } catch { inventory = {}; }
+function saveInventory() {
+  try { localStorage.setItem("fc.inventory", JSON.stringify(inventory)); } catch {}
+  scheduleSheetPush();
+}
+
+/* ---------------- UI ---------------- */
+const $ = (id) => document.getElementById(id);
+// "hey_claude.onnx" / "hey_jarvis_v0.1.onnx" -> "Hey Claude" / "Hey Jarvis"
+function wakeLabel() {
+  return (settings.wake || DEFAULTS.wake).replace(/\.onnx$/i, "").replace(/_v[\d.]+$/i, "")
+    .split(/[_\-\s]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+const STATUS_ORDER = ["have", "low", "out"];
+
+function setStatus(kind, text) {
+  $("status").className = kind;
+  $("status-text").textContent = text;
+}
+
+function render(flashNames = []) {
+  const groups = { have: [], low: [], out: [] };
+  for (const [name, v] of Object.entries(inventory)) (groups[v.status] || groups.have).push(name);
+  for (const status of STATUS_ORDER) {
+    const list = document.querySelector(`.list[data-status="${status}"]`);
+    list.textContent = "";
+    groups[status].sort((a, b) => a.localeCompare(b)).forEach((name) => {
+      const chip = document.createElement("span");
+      chip.className = "chip" + (flashNames.includes(name) ? " flash" : "");
+      const label = document.createElement("span");
+      label.textContent = name;
+      const x = document.createElement("span");
+      x.className = "x"; x.textContent = "✕";
+      x.addEventListener("click", (e) => { e.stopPropagation(); delete inventory[name]; saveInventory(); render(); });
+      chip.append(label, x);
+      // Tap cycles: have -> low -> out -> have
+      chip.addEventListener("click", () => {
+        const next = STATUS_ORDER[(STATUS_ORDER.indexOf(inventory[name].status) + 1) % 3];
+        inventory[name] = { status: next, updated: Date.now() };
+        saveInventory(); render([name]);
+      });
+      list.append(chip);
+    });
+    list.parentElement.querySelector(".count").textContent = groups[status].length ? `(${groups[status].length})` : "";
+  }
+}
+
+function showExchange(heard, reply) {
+  $("heard").textContent = heard ? `“${heard}”` : "";
+  $("reply").textContent = reply || "";
+}
+
+/* ---------------- Sounds & speech output ---------------- */
+let chimeCtx = null;
+function chime() {
+  try {
+    chimeCtx = chimeCtx || new AudioContext();
+    const t = chimeCtx.currentTime;
+    [660, 990].forEach((f, i) => {
+      const o = chimeCtx.createOscillator(), g = chimeCtx.createGain();
+      o.frequency.value = f; o.connect(g); g.connect(chimeCtx.destination);
+      g.gain.setValueAtTime(0.0001, t + i * 0.12);
+      g.gain.exponentialRampToValueAtTime(0.25, t + i * 0.12 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.2);
+      o.start(t + i * 0.12); o.stop(t + i * 0.12 + 0.22);
+    });
+  } catch {}
+}
+
+function speak(text) {
+  return new Promise((resolve) => {
+    if (!text || !("speechSynthesis" in window)) return resolve();
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05;
+    u.onend = u.onerror = () => resolve();
+    speechSynthesis.speak(u);
+    setTimeout(resolve, 12000); // safety
+  });
+}
+
+/* ---------------- Wake word (openWakeWord in the browser) ---------------- */
+// Pipeline (mirrors openWakeWord's Python streaming code):
+//   16 kHz audio, 1280-sample chunks (80 ms)
+//   -> melspectrogram.onnx  (frames of 32 mel bins, transformed x/10+2)
+//   -> embedding_model.onnx (76 mel frames -> 96-dim embedding)
+//   -> wake model           (last 16 embeddings -> score 0..1)
+class WakeWord {
+  constructor({ modelBase, wakeFile, threshold, onWake, onLevel }) {
+    Object.assign(this, { modelBase, wakeFile, threshold, onWake, onLevel });
+    this.running = false; this.busy = false; this.queue = [];
+    this.lastWake = 0;
+  }
+
+  async load() {
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
+    const opts = { executionProviders: ["wasm"] };
+    [this.mel, this.emb, this.wake] = await Promise.all([
+      ort.InferenceSession.create(this.modelBase + "melspectrogram.onnx", opts),
+      ort.InferenceSession.create(this.modelBase + "embedding_model.onnx", opts),
+      ort.InferenceSession.create(this.modelBase + this.wakeFile, opts),
+    ]);
+  }
+
+  resetBuffers() {
+    this.raw = new Float32Array(0);
+    this.pending = new Float32Array(0);
+    this.melFrames = Array.from({ length: 76 }, () => new Float32Array(32).fill(1));
+    this.features = [];
+    this.chunks = 0;
+  }
+
+  async start() {
+    this.resetBuffers();
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    this.ctx = new AudioContext({ sampleRate: 16000 });
+    const workletSrc = `
+      class Tap extends AudioWorkletProcessor {
+        process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; }
+      }
+      registerProcessor("tap", Tap);`;
+    const url = URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" }));
+    await this.ctx.audioWorklet.addModule(url);
+    const src = this.ctx.createMediaStreamSource(this.stream);
+    this.node = new AudioWorkletNode(this.ctx, "tap");
+    this.node.port.onmessage = (e) => this.onSamples(e.data);
+    src.connect(this.node);
+    // Worklet must reach the graph's output to keep running; route through a muted gain.
+    const mute = this.ctx.createGain(); mute.gain.value = 0;
+    this.node.connect(mute); mute.connect(this.ctx.destination);
+    this.running = true;
+  }
+
+  async stop() {
+    this.running = false;
+    try { this.node && this.node.disconnect(); } catch {}
+    try { this.stream && this.stream.getTracks().forEach((t) => t.stop()); } catch {}
+    try { this.ctx && await this.ctx.close(); } catch {}
+    this.queue = [];
+  }
+
+  onSamples(f32) {
+    if (!this.running) return;
+    // Scale to int16 range like openWakeWord expects.
+    const s = new Float32Array(f32.length);
+    let peak = 0;
+    for (let i = 0; i < f32.length; i++) { s[i] = f32[i] * 32767; const a = Math.abs(f32[i]); if (a > peak) peak = a; }
+    this.onLevel && this.onLevel(peak);
+    const merged = new Float32Array(this.pending.length + s.length);
+    merged.set(this.pending); merged.set(s, this.pending.length);
+    let off = 0;
+    while (merged.length - off >= 1280) { this.queue.push(merged.slice(off, off + 1280)); off += 1280; }
+    this.pending = merged.slice(off);
+    if (this.queue.length > 6) this.queue.splice(0, this.queue.length - 6); // drop if we fall behind
+    this.pump();
+  }
+
+  async pump() {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      while (this.running && this.queue.length) await this.processChunk(this.queue.shift());
+    } catch (err) {
+      console.error("wake word error", err);
+    } finally { this.busy = false; }
+  }
+
+  async processChunk(chunk) {
+    // Keep a rolling raw buffer; melspectrogram runs on the newest 1280 + 480 samples.
+    const raw = new Float32Array(this.raw.length + chunk.length);
+    raw.set(this.raw); raw.set(chunk, this.raw.length);
+    this.raw = raw.length > 16000 ? raw.slice(raw.length - 16000) : raw;
+    const n = Math.min(this.raw.length, 1280 + 480);
+    const audio = this.raw.slice(this.raw.length - n);
+
+    const melOut = await this.mel.run({ [this.mel.inputNames[0]]: new ort.Tensor("float32", audio, [1, n]) });
+    const m = melOut[this.mel.outputNames[0]].data;
+    for (let i = 0; i + 32 <= m.length; i += 32) {
+      const frame = new Float32Array(32);
+      for (let j = 0; j < 32; j++) frame[j] = m[i + j] / 10 + 2;
+      this.melFrames.push(frame);
+    }
+    if (this.melFrames.length > 300) this.melFrames.splice(0, this.melFrames.length - 300);
+
+    const win = new Float32Array(76 * 32);
+    this.melFrames.slice(-76).forEach((f, i) => win.set(f, i * 32));
+    const embOut = await this.emb.run({ [this.emb.inputNames[0]]: new ort.Tensor("float32", win, [1, 76, 32, 1]) });
+    this.features.push(Float32Array.from(embOut[this.emb.outputNames[0]].data));
+    if (this.features.length > 16) this.features.shift();
+
+    this.chunks++;
+    if (this.features.length < 16 || this.chunks < 20) return; // warm-up ~1.6 s
+
+    const feat = new Float32Array(16 * 96);
+    this.features.forEach((f, i) => feat.set(f, i * 96));
+    const wakeOut = await this.wake.run({ [this.wake.inputNames[0]]: new ort.Tensor("float32", feat, [1, 16, 96]) });
+    const score = wakeOut[this.wake.outputNames[0]].data[0];
+    if (score >= this.threshold && Date.now() - this.lastWake > 2500) {
+      this.lastWake = Date.now();
+      this.onWake && this.onWake(score);
+    }
+  }
+}
+
+/* ---------------- Speech to text (Chrome's recognizer) ---------------- */
+function listenOnce({ timeoutMs = 9000 } = {}) {
+  return new Promise((resolve) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return resolve({ error: "Speech recognition isn't available in this browser." });
+    const rec = new SR();
+    rec.lang = "en-US"; rec.interimResults = true; rec.maxAlternatives = 1; rec.continuous = false;
+    let finalText = "", done = false;
+    const finish = (r) => { if (!done) { done = true; clearTimeout(t); try { rec.stop(); } catch {} resolve(r); } };
+    const t = setTimeout(() => finish({ text: finalText.trim() }), timeoutMs);
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript + " ";
+        else interim += e.results[i][0].transcript;
+      }
+      $("heard").textContent = (finalText + interim).trim();
+    };
+    rec.onerror = (e) => finish({ text: finalText.trim(), error: e.error === "no-speech" ? null : e.error });
+    rec.onend = () => finish({ text: finalText.trim() });
+    try { rec.start(); } catch (err) { finish({ error: String(err) }); }
+  });
+}
+
+/* ---------------- Claude ---------------- */
+const SYSTEM = `You manage a family's kitchen inventory on a tablet mounted on their fridge.
+Every item has exactly one status: "have", "low" or "out". There are no quantities.
+You receive the current inventory and a speech-to-text transcript of what someone said in the kitchen. Transcripts can contain recognition errors; infer the most likely meaning.
+Always call the respond tool exactly once:
+- updates: every status change implied by the message. Reuse an existing item's exact name when it is the same food (e.g. "blueberry" -> "blueberries"). New items get short, lowercase, plural-where-natural names ("blueberries", "eggs", "greek yogurt").
+  "we're out of / finished / used the last" -> out; "running low / almost out" -> low; "bought / got / restocked / we have" -> have; "stop tracking / remove" -> remove.
+- reply: a short spoken confirmation or answer, under 15 words, friendly, no emoji. If they asked a question (e.g. "what are we out of?"), answer it from the inventory and make no updates.
+If the message isn't about food or the inventory, make no updates and say briefly what you can help with.`;
+
+const TOOL = {
+  name: "respond",
+  description: "Apply inventory changes and give the spoken reply.",
+  input_schema: {
+    type: "object",
+    properties: {
+      updates: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            item: { type: "string" },
+            status: { type: "string", enum: ["have", "low", "out", "remove"] },
+          },
+          required: ["item", "status"],
+        },
+      },
+      reply: { type: "string" },
+    },
+    required: ["updates", "reply"],
+  },
+};
+
+async function askClaude(text) {
+  if (!settings.key) throw new Error("Add your Claude API key in Settings (⚙︎).");
+  const current = Object.entries(inventory).map(([n, v]) => `${n}: ${v.status}`).join("\n") || "(empty)";
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": settings.key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: settings.model || DEFAULTS.model,
+      max_tokens: 500,
+      system: SYSTEM,
+      tools: [TOOL],
+      tool_choice: { type: "tool", name: "respond" },
+      messages: [{ role: "user", content: `Current inventory:\n${current}\n\nThey said: "${text}"` }],
+    }),
+  });
+  if (!res.ok) {
+    let msg = `Claude API error ${res.status}`;
+    try { const j = await res.json(); if (j.error && j.error.message) msg += `: ${j.error.message}`; } catch {}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  const call = (data.content || []).find((b) => b.type === "tool_use");
+  return call ? call.input : { updates: [], reply: "Sorry, I didn't catch that." };
+}
+
+function applyUpdates(updates) {
+  const changed = [];
+  for (const u of updates || []) {
+    const name = String(u.item || "").trim().toLowerCase();
+    if (!name) continue;
+    if (u.status === "remove") { delete inventory[name]; continue; }
+    if (!STATUS_ORDER.includes(u.status)) continue;
+    inventory[name] = { status: u.status, updated: Date.now() };
+    changed.push(name);
+  }
+  saveInventory();
+  render(changed);
+}
+
+/* ---------------- Google Sheet sync (optional) ---------------- */
+let pushTimer = null;
+function scheduleSheetPush() {
+  if (!settings.sheet) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushSheet, 1500);
+}
+async function pushSheet() {
+  if (!settings.sheet) return;
+  try {
+    // text/plain avoids a CORS preflight, which Apps Script can't answer.
+    await fetch(settings.sheet, { method: "POST", headers: { "content-type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ items: inventory }) });
+  } catch (err) { console.warn("sheet push failed", err); }
+}
+async function pullSheet() {
+  if (!settings.sheet) return;
+  try {
+    const res = await fetch(settings.sheet);
+    const data = await res.json();
+    if (data && data.items && typeof data.items === "object") {
+      const next = {};
+      for (const [n, v] of Object.entries(data.items)) {
+        if (v && STATUS_ORDER.includes(v.status)) next[String(n).toLowerCase()] = { status: v.status, updated: Number(v.updated) || Date.now() };
+      }
+      inventory = next;
+      try { localStorage.setItem("fc.inventory", JSON.stringify(inventory)); } catch {}
+      render();
+    }
+  } catch (err) { console.warn("sheet pull failed", err); }
+}
+
+/* ---------------- Main flow ---------------- */
+let wake = null;
+let handling = false;
+
+async function handleUtterance(text) {
+  if (!text) { showExchange("", "I didn't hear anything."); return; }
+  setStatus("thinking", "Thinking…");
+  showExchange(text, "…");
+  try {
+    const { updates, reply } = await askClaude(text);
+    applyUpdates(updates);
+    showExchange(text, reply);
+    await speak(reply);
+  } catch (err) {
+    showExchange(text, err.message);
+    setStatus("error", "Error");
+    await speak("Sorry, something went wrong.");
+  }
+}
+
+async function converse() {
+  if (handling) return;
+  handling = true;
+  try {
+    // Free the mic for the recognizer (Android allows only one capture at a time).
+    if (wake && wake.running) await wake.stop();
+    chime();
+    await new Promise((r) => setTimeout(r, 250));
+    setStatus("hearing", "Listening to you…");
+    $("heard").textContent = ""; $("reply").textContent = "";
+    const { text, error } = await listenOnce();
+    if (error && !text) { showExchange("", `Mic problem: ${error}`); }
+    else await handleUtterance(text);
+  } finally {
+    handling = false;
+    await resumeWake();
+  }
+}
+
+async function resumeWake() {
+  if (!wake) { setStatus("", "Tap 🎤 to talk"); return; }
+  try {
+    await wake.start();
+    setStatus("listening", `Say “${wakeLabel()}”`);
+  } catch (err) {
+    setStatus("error", "Mic unavailable");
+    console.error(err);
+  }
+}
+
+let wakeLock = null;
+async function keepAwake() {
+  try { wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+}
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible") {
+    keepAwake();
+    if (wake && !wake.running && !handling) resumeWake();
+    pullSheet();
+  }
+});
+
+async function boot() {
+  $("start-msg").textContent = "Loading wake word…";
+  keepAwake();
+  chimeCtx = new AudioContext(); // unlock audio on this tap
+  try {
+    wake = new WakeWord({
+      modelBase: "",
+      wakeFile: settings.wake || DEFAULTS.wake,
+      threshold: Number(settings.thresh) || DEFAULTS.thresh,
+      onWake: () => converse(),
+      onLevel: (p) => { $("level").firstElementChild.style.width = Math.min(100, p * 300) + "%"; },
+    });
+    await wake.load();
+    await wake.start();
+    setStatus("listening", `Say “${wakeLabel()}”`);
+  } catch (err) {
+    console.error(err);
+    wake = null;
+    setStatus("error", "Wake word off — tap 🎤");
+    showExchange("", `Couldn't start the wake word (${err.message || err}). Check that the .onnx files are uploaded next to index.html. Tap 🎤 to talk meanwhile.`);
+  }
+  $("start-overlay").hidden = true;
+}
+
+/* ---------------- Wire up ---------------- */
+$("start-btn").addEventListener("click", boot);
+$("talk").addEventListener("click", () => converse());
+$("type-send").addEventListener("click", () => {
+  const v = $("type-box").value.trim();
+  if (v) { $("type-box").value = ""; handleUtterance(v).then(() => { if (wake && wake.running) setStatus("listening", `Say “${wakeLabel()}”`); }); }
+});
+$("type-box").addEventListener("keydown", (e) => { if (e.key === "Enter") $("type-send").click(); });
+
+$("settings-btn").addEventListener("click", () => {
+  $("s-key").value = settings.key; $("s-model").value = settings.model; $("s-sheet").value = settings.sheet;
+  $("s-wake").value = settings.wake; $("s-thresh").value = settings.thresh;
+  $("settings").hidden = false;
+});
+$("s-cancel").addEventListener("click", () => { $("settings").hidden = true; });
+$("s-save").addEventListener("click", () => {
+  const wakeChanged = $("s-wake").value.trim() !== settings.wake;
+  settings = {
+    key: $("s-key").value.trim(),
+    model: $("s-model").value.trim() || DEFAULTS.model,
+    sheet: $("s-sheet").value.trim(),
+    wake: $("s-wake").value.trim() || DEFAULTS.wake,
+    thresh: Math.min(0.9, Math.max(0.1, Number($("s-thresh").value) || DEFAULTS.thresh)),
+  };
+  saveSettings();
+  if (wake) wake.threshold = settings.thresh;
+  $("settings").hidden = true;
+  pullSheet();
+  if (wakeChanged) location.reload();
+});
+
+render();
+pullSheet();
+setInterval(pullSheet, 5 * 60 * 1000); // pick up changes made from chat
+if (!settings.key) $("start-msg").textContent = "First time? After starting, open ⚙︎ and add your Claude API key.";
+</script>
+</body>
+</html>
