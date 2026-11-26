@@ -1067,6 +1067,9 @@ function micIdle(reason){
   if (reason === "not_granted" || reason === "unavailable") S.micGone = true;
   if (S.bulk && !S.bulkEnding && reason !== "stopped") S.micPaused = true;
   if (S.bulk && S.bulkBuf.trim() && !S.busy) flushBulk();
+  // On phones and tablets the recognizer ends by itself after a sentence. Send what was heard right away
+  // ("stopped" means finishSingle ended it and is already sending).
+  if (!S.bulk && !S.bulkEnding && reason !== "stopped" && say.value.trim() && !S.busy) submitText("voice");
 }
 
 function flushBulk(){
